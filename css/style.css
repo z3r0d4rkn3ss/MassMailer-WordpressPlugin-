@@ -1,0 +1,493 @@
+/* mass-mailer/css/style.css */
+
+/* --- Base Styles --- */
+body {
+    font-family: 'Inter', sans-serif; /* Ensure Inter font is loaded via <link> in HTML */
+    margin: 0;
+    padding: 20px;
+    background-color: #f0f2f5;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1000px; /* Adjusted for general use, can be overridden */
+    margin: 0 auto;
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+h1, h2, h3 {
+    color: #007cba;
+    margin-top: 0;
+    margin-bottom: 20px;
+}
+
+h1 {
+    border-bottom: 2px solid #eee;
+    padding-bottom: 15px;
+    margin-bottom: 30px;
+}
+
+h2 {
+    border-bottom: 1px dashed #eee;
+    padding-bottom: 10px;
+    margin-top: 30px;
+}
+
+/* --- Messages --- */
+.message {
+    padding: 10px 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    font-weight: bold;
+    font-size: 0.95em;
+}
+
+.message.success {
+    background-color: #d4edda;
+    color: #155724;
+    border-color: #c3e6cb;
+}
+
+.message.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border-color: #f5c6cb;
+}
+
+/* --- Forms --- */
+form {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    border: 1px solid #eee;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group input[type="number"],
+.form-group input[type="password"],
+.form-group input[type="datetime-local"],
+.form-group select,
+.form-group textarea { /* Added textarea for templates */
+    width: calc(100% - 22px); /* Account for padding and border */
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box; /* Ensures padding/border are inside the width */
+    font-size: 1em;
+}
+
+form button,
+.action-buttons button {
+    background-color: #007cba;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    font-size: 1em;
+}
+
+form button:hover,
+.action-buttons button:hover {
+    background-color: #005f93;
+}
+
+/* Specific button styles */
+.action-buttons .edit {
+    background-color: #ffc107;
+    color: #333;
+}
+.action-buttons .edit:hover {
+    background-color: #e0a800;
+}
+.action-buttons .delete {
+    background-color: #dc3545;
+    color: #fff;
+}
+.action-buttons .delete:hover {
+    background-color: #c82333;
+}
+.action-buttons .send-now,
+.action-buttons .start-test {
+    background-color: #28a745;
+    color: #fff;
+}
+.action-buttons .send-now:hover,
+.action-buttons .start-test:hover {
+    background-color: #218838;
+}
+.action-buttons .determine-winner {
+    background-color: #007bff;
+    color: #fff;
+}
+.action-buttons .determine-winner:hover {
+    background-color: #0056b3;
+}
+.action-buttons .send-winner {
+    background-color: #6c757d;
+    color: #fff;
+}
+.action-buttons .send-winner:hover {
+    background-color: #5a6268;
+}
+.delete-btn { /* For privacy page */
+    background-color: #dc3545 !important; /* Override general button style */
+}
+.delete-btn:hover {
+    background-color: #c82333 !important;
+}
+
+
+/* --- Tables --- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    margin-bottom: 30px;
+}
+
+table th,
+table td {
+    border: 1px solid #eee;
+    padding: 12px;
+    text-align: left;
+}
+
+table th {
+    background-color: #f2f2f2;
+    font-weight: 600;
+    color: #555;
+}
+
+table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap; /* Allow buttons to wrap on smaller screens */
+}
+.action-buttons form {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+}
+.action-buttons button {
+    margin-right: 0px; /* Remove individual button margin, use flex gap */
+    padding: 6px 12px;
+    font-size: 0.85em;
+    border-radius: 4px;
+}
+
+
+/* --- Info Text / Code Snippets --- */
+.info-text {
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 5px;
+    line-height: 1.4;
+}
+
+code {
+    background-color: #eef;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+/* --- Status Badges (for Campaigns, Subscribers, A/B Tests) --- */
+.status-draft, .status-pending { color: #6c757d; } /* Grey */
+.status-scheduled, .status-running { color: #007bff; font-weight: bold; } /* Blue */
+.status-sending { color: #ffc107; font-weight: bold; } /* Orange */
+.status-sent, .status-completed, .status-active, .status-subscribed { color: #28a745; font-weight: bold; } /* Green */
+.status-paused { color: #6f42c1; } /* Purple */
+.status-cancelled, .status-unsubscribed, .status-bounced, .status-inactive { color: #dc3545; font-weight: bold; } /* Red */
+.status-failed { color: #dc3545; font-weight: bold; }
+
+
+/* --- Dashboard Specific Styles --- */
+.user-info {
+    text-align: right;
+    margin-bottom: 20px;
+    font-size: 0.9em;
+    color: #666;
+}
+.user-info a {
+    color: #dc3545;
+    text-decoration: none;
+    margin-left: 10px;
+}
+.user-info a:hover {
+    text-decoration: underline;
+}
+.nav-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+.nav-item {
+    background-color: #e9f7fe;
+    padding: 25px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid #d0effd;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.nav-item:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+.nav-item a {
+    text-decoration: none;
+    color: #007cba;
+    font-weight: bold;
+    font-size: 1.2em;
+    display: block;
+}
+.nav-item p {
+    margin-top: 10px;
+    color: #555;
+    font-size: 0.9em;
+}
+
+/* --- Reports Specific Styles --- */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+.stat-card {
+    background-color: #e9f7fe;
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid #d0effd;
+}
+.stat-card h3 {
+    margin-top: 0;
+    color: #005f93;
+    font-size: 1.1em;
+}
+.stat-card .value {
+    font-size: 2.2em;
+    font-weight: bold;
+    color: #007cba;
+}
+.stat-card .percentage {
+    font-size: 1.2em;
+    color: #28a745;
+}
+.stat-card .percentage.negative {
+    color: #dc3545;
+}
+.chart-container {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #eee;
+    margin-bottom: 30px;
+}
+.chart-container canvas {
+    max-width: 100%;
+    height: 300px; /* Fixed height for charts */
+}
+
+/* --- API Key Table Specifics --- */
+.api-key-table code {
+    word-break: break-all; /* Ensure long keys wrap */
+}
+
+/* --- Rule Builder Specifics (for Segments) --- */
+.rule-builder {
+    border: 1px dashed #ccc;
+    padding: 15px;
+    margin-bottom: 15px;
+    background-color: #fefefe;
+    border-radius: 5px;
+}
+.rule-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+.rule-row select, .rule-row input {
+    flex: 1;
+}
+.rule-row button {
+    flex-shrink: 0;
+    background-color: #dc3545; /* Red for remove button */
+}
+.add-rule-button {
+    background-color: #28a745; /* Green for add button */
+    margin-top: 10px;
+}
+.add-rule-button:hover {
+    background-color: #218838;
+}
+
+/* --- Modals --- */
+#editSegmentModal, #editCampaignModal, #editABTestModal, #editApiKeyModal {
+    display:none; /* Hidden by default */
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    background:rgba(0,0,0,0.5);
+    z-index:1000;
+    justify-content:center;
+    align-items:center;
+}
+#editSegmentModal > div, #editCampaignModal > div, #editABTestModal > div, #editApiKeyModal > div {
+    background:#fff;
+    padding:30px;
+    border-radius:8px;
+    width:800px; /* Adjust width as needed for specific modals */
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow:0 5px 15px rgba(0,0,0,0.2);
+}
+/* Specific modal widths */
+#editCampaignModal > div { width: 600px; }
+#editABTestModal > div { width: 600px; }
+#editApiKeyModal > div { width: 500px; }
+
+/* --- Frontend Form (views/form-builder.php) --- */
+.mass-mailer-form-container {
+    font-family: 'Inter', sans-serif;
+    max-width: 450px;
+    margin: 20px auto;
+    padding: 30px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background-color: #f9f9f9;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+.mass-mailer-form-container h2 {
+    color: #007cba;
+    text-align: center;
+    margin-bottom: 20px;
+}
+.mass-mailer-form-container p {
+    text-align: center;
+    color: #555;
+    margin-bottom: 25px;
+    line-height: 1.5;
+}
+.mass-mailer-form-group {
+    margin-bottom: 15px;
+}
+.mass-mailer-form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+}
+.mass-mailer-form-group input[type="text"],
+.mass-mailer-form-group input[type="email"] {
+    width: calc(100% - 22px);
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 1em;
+}
+.mass-mailer-form-group input[type="text"]:focus,
+.mass-mailer-form-group input[type="email"]:focus {
+    border-color: #007cba;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(0, 124, 186, 0.2);
+}
+.mass-mailer-submit-btn {
+    width: 100%;
+    padding: 12px;
+    background-color: #007cba;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    font-size: 1.1em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+.mass-mailer-submit-btn:hover {
+    background-color: #005f93;
+}
+.mass-mailer-message {
+    margin-top: 20px;
+    padding: 10px;
+    border-radius: 5px;
+    text-align: center;
+    font-weight: bold;
+    display: none; /* Hidden by default, shown by JS */
+}
+.mass-mailer-message.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+.mass-mailer-message.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+.mass-mailer-privacy-notice {
+    font-size: 0.85em;
+    color: #777;
+    margin-top: 20px;
+    text-align: center;
+    line-height: 1.4;
+}
+
+/* --- Verification Page (verify.php) --- */
+.verification-container {
+    font-family: 'Inter', sans-serif;
+    margin: 20px;
+    background-color: #f0f2f5;
+    color: #333;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 80vh;
+}
+.verification-container .container { /* Reusing .container style */
+    max-width: 600px;
+    text-align: center;
+    padding: 40px;
+}
+.verification-container h1 {
+    color: #007cba;
+    margin-bottom: 20px;
+    border-bottom: none; /* Override default h1 border */
+    padding-bottom: 0;
+}
+.verification-container a {
+    color: #007cba;
+    text-decoration: none;
+}
+.verification-container a:hover {
+    text-decoration: underline;
+}
+
