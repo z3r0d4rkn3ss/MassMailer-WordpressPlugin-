@@ -4,7 +4,7 @@
  *
  * This file serves as the main entry point for the Mass Mailer admin area.
  * It provides an overview and navigation links to other admin pages.
- * Now includes authentication check and a link to Reports.
+ * Now includes authentication check and a link to API Settings.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -100,7 +100,7 @@ $current_user = $auth->getCurrentUser();
             </div>
             <div class="nav-item">
                 <a href="settings.php">Settings</a>
-                <p>Configure plugin settings (e.g., sender info).</p>
+                <p>Configure plugin settings (e.g., sender info) and API keys.</p>
             </div>
             <!-- Add more navigation items as needed -->
         </div>
