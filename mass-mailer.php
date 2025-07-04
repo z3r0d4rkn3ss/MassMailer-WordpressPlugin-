@@ -1,9 +1,9 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - API Integration Updates
+ * Mass Mailer Main Plugin File - GDPR/Privacy Features Updates
  *
- * This file integrates the new components for API for External Integration.
- * It adds database table creation for API keys.
+ * This file updates the main plugin to support GDPR features.
+ * It adds database column updates for double opt-in and routing for the verification endpoint.
  *
  * @package Mass_Mailer
  */
@@ -34,12 +34,10 @@ require_once ABSPATH . '/includes/settings-manager.php';
 require_once ABSPATH . '/includes/bounce-handler.php';
 require_once ABSPATH . '/includes/segment-manager.php';
 require_once ABSPATH . '/includes/ab-test-manager.php';
-
-// --- NEW: Include API Manager ---
 require_once ABSPATH . '/includes/api-manager.php';
 
 
-// --- Plugin Activation and Deactivation Hooks (Updated for API Keys) ---
+// --- Plugin Activation and Deactivation Hooks (Updated for GDPR) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
@@ -52,10 +50,12 @@ function mass_mailer_activate() {
     $bounce_handler = new MassMailerBounceHandler();
     $segment_manager = new MassMailerSegmentManager();
     $ab_test_manager = new MassMailerABTestManager();
-    $api_manager = new MassMailerAPIManager(); // Instantiate to call create table method
+    $api_manager = new MassMailerAPIManager();
 
 
     // SQL for existing tables (ensure they are idempotent with IF NOT EXISTS)
+    // IMPORTANT: Note the changes in mm_subscribers table structure (verification_token, opt_in_date)
+    // If you're updating an existing DB, you'll need ALTER TABLE statements.
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
         `list_id` INT AUTO_INCREMENT PRIMARY KEY,
         `list_name` VARCHAR(255) NOT NULL UNIQUE,
@@ -70,7 +70,9 @@ function mass_mailer_activate() {
         `last_name` VARCHAR(100),
         `status` ENUM('subscribed', 'unsubscribed', 'pending', 'bounced') DEFAULT 'pending',
         `subscribed_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        `verification_token` VARCHAR(64) NULL UNIQUE, -- NEW for double opt-in
+        `opt_in_date` TIMESTAMP NULL -- NEW: Date of confirmed opt-in
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
     $sql_rel = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "list_subscriber_rel` (
@@ -93,9 +95,6 @@ function mass_mailer_activate() {
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
-    // mm_campaigns table structure is handled by CampaignManager->createCampaignTable()
-    // and will include ab_test_id and ab_test_variant.
-
     $sql_queue = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "queue` (
             `queue_id` INT AUTO_INCREMENT PRIMARY KEY,
             `campaign_id` INT NOT NULL,
@@ -108,7 +107,7 @@ function mass_mailer_activate() {
             `sent_at` TIMESTAMP NULL,
             UNIQUE KEY `campaign_subscriber_idx` (`campaign_id`, `subscriber_id`),
             FOREIGN KEY (`campaign_id`) REFERENCES " . MM_TABLE_PREFIX . "campaigns(`campaign_id`) ON DELETE CASCADE,
-            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
+            FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
     $sql_opens = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "opens` (
@@ -120,7 +119,7 @@ function mass_mailer_activate() {
             `user_agent` TEXT NULL,
             UNIQUE KEY `campaign_subscriber_open_idx` (`campaign_id`, `subscriber_id`),
             FOREIGN KEY (`campaign_id`) REFERENCES " . MM_TABLE_PREFIX . "campaigns(`campaign_id`) ON DELETE CASCADE,
-            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
+            FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
     $sql_clicks = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "clicks` (
@@ -132,7 +131,7 @@ function mass_mailer_activate() {
             `ip_address` VARCHAR(45) NULL,
             `user_agent` TEXT NULL,
             FOREIGN KEY (`campaign_id`) REFERENCES " . MM_TABLE_PREFIX . "campaigns(`campaign_id`) ON DELETE CASCADE,
-            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
+            FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
     $sql_automations = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "automations` (
@@ -196,10 +195,22 @@ function mass_mailer_activate() {
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
+    $sql_api_keys = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "api_keys` (
+            `api_key_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `api_key` VARCHAR(64) NOT NULL UNIQUE,
+            `user_id` INT NULL,
+            `description` VARCHAR(255) NULL,
+            `status` ENUM('active', 'inactive') DEFAULT 'active',
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `last_used_at` TIMESTAMP NULL,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (`user_id`) REFERENCES " . MM_TABLE_PREFIX . "users(`user_id`) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
 
     try {
         $db->query($sql_lists);
-        $db->query($sql_subscribers);
+        $db->query($sql_subscribers); // This now includes verification_token and opt_in_date
         $db->query($sql_rel);
         $template_manager->createTemplateTable();
         $segment_manager->createSegmentsTable();
@@ -211,7 +222,6 @@ function mass_mailer_activate() {
         $settings_manager->createSettingsTable();
         $bounce_handler->createBouncesLogTable();
         $ab_test_manager->createABTestsTable();
-        // NEW: Create API keys table
         $api_manager->createApiKeysTable();
 
         // Add foreign key for ab_test_id to mm_campaigns if it doesn't exist
@@ -232,6 +242,25 @@ function mass_mailer_activate() {
             $add_fk_api_keys_user_sql = "ALTER TABLE `" . MM_TABLE_PREFIX . "api_keys` ADD CONSTRAINT `fk_api_keys_user` FOREIGN KEY (`user_id`) REFERENCES `" . MM_TABLE_PREFIX . "users`(`user_id`) ON DELETE SET NULL;";
             $db->query($add_fk_api_keys_user_sql);
             error_log('Mass Mailer: Added foreign key for user_id to mm_api_keys.');
+        }
+
+        // NEW: Add columns to mm_subscribers for GDPR/Double Opt-in if they don't exist
+        // Check for 'verification_token' column
+        $check_token_col_sql = "SHOW COLUMNS FROM `" . MM_TABLE_PREFIX . "subscribers` LIKE 'verification_token';";
+        $token_col_exists = $db->fetch($check_token_col_sql);
+        if (!$token_col_exists) {
+            $add_token_col_sql = "ALTER TABLE `" . MM_TABLE_PREFIX . "subscribers` ADD COLUMN `verification_token` VARCHAR(64) NULL UNIQUE AFTER `updated_at`;";
+            $db->query($add_token_col_sql);
+            error_log('Mass Mailer: Added verification_token column to mm_subscribers.');
+        }
+
+        // Check for 'opt_in_date' column
+        $check_opt_in_col_sql = "SHOW COLUMNS FROM `" . MM_TABLE_PREFIX . "subscribers` LIKE 'opt_in_date';";
+        $opt_in_col_exists = $db->fetch($check_opt_in_col_sql);
+        if (!$opt_in_col_exists) {
+            $add_opt_in_col_sql = "ALTER TABLE `" . MM_TABLE_PREFIX . "subscribers` ADD COLUMN `opt_in_date` TIMESTAMP NULL AFTER `verification_token`;";
+            $db->query($add_opt_in_col_sql);
+            error_log('Mass Mailer: Added opt_in_date column to mm_subscribers.');
         }
 
 
@@ -279,25 +308,20 @@ function mass_mailer_handle_form_submission() {
             $subscriber_manager = new MassMailerSubscriberManager();
             $list_manager = new MassMailerListManager();
 
+            // New subscribers will be 'pending' and receive a verification email
             $subscriber_id = $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'pending');
 
             if ($subscriber_id) {
                 if ($list_id) {
                     $list = $list_manager->getList($list_id);
                     if ($list) {
-                        $added_to_list = $subscriber_manager->addSubscriberToList($subscriber_id, $list_id, 'active');
+                        // Add to list with 'pending' status initially, will become 'active' on verification
+                        $added_to_list = $subscriber_manager->addSubscriberToList($subscriber_id, $list_id, 'pending');
                         if ($added_to_list) {
                             $response['success'] = true;
-                            $response['message'] = 'Thank you for subscribing!';
-                            $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'subscribed');
-
-                            $automation_manager = new MassMailerAutomationManager();
-                            $automation_manager->processAutomations('subscriber_added', [
-                                'subscriber_id' => $subscriber_id,
-                                'list_id' => $list_id,
-                                'email' => $email
-                            ]);
-
+                            $response['message'] = 'Thank you for subscribing! Please check your email to confirm your subscription.';
+                            // Automation for 'subscriber_added' will trigger only on 'subscribed' status
+                            // So, we don't trigger it here for 'pending' status.
                         } else {
                             $response['message'] = 'Subscription failed for the specified list. Please try again.';
                         }
@@ -306,8 +330,7 @@ function mass_mailer_handle_form_submission() {
                     }
                 } else {
                     $response['success'] = true;
-                    $response['message'] = 'Thank you for subscribing! (No specific list selected)';
-                    $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'subscribed');
+                    $response['message'] = 'Thank you for subscribing! Please check your email to confirm your subscription.';
                 }
             } else {
                 $response['message'] = 'Failed to process your subscription. Please try again later.';
@@ -454,6 +477,12 @@ function mass_mailer_handle_tracking() {
 // Simple routing for tracking and unsubscribe actions
 if (isset($_GET['action']) && in_array($_GET['action'], ['track_open', 'track_click', 'unsubscribe'])) {
     mass_mailer_handle_tracking();
+}
+
+// NEW: Routing for email verification endpoint
+if (isset($_GET['action']) && $_GET['action'] === 'verify_email') {
+    require_once ABSPATH . '/verify.php';
+    exit; // Stop further execution after handling verification
 }
 
 ?>
