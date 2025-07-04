@@ -1,8 +1,10 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Phase 4 Updates
+ * Mass Mailer Main Plugin File - Phase 5 Updates
  *
- * This file integrates the new components for Phase 4: Queue System & Send Throttling.
+ * This file integrates the new components for Phase 5: Tracking & Analytics.
+ * It adds database table creation for tracking and sets up routing for
+ * tracking pixel and click redirect URLs.
  *
  * IMPORTANT: This code snippet provides the *additions* and *modifications* to your existing
  * mass-mailer.php file. You will need to integrate these sections.
@@ -15,7 +17,7 @@ if (!defined('ABSPATH')) {
     die('Direct access not allowed.');
 }
 
-// --- Configuration and Core Includes (Existing from Phase 1, 2, & 3) ---
+// --- Configuration and Core Includes (Existing from Phase 1, 2, 3, & 4) ---
 require_once dirname(__FILE__) . '/config.php';
 require_once dirname(__FILE__) . '/includes/db.php';
 require_once dirname(__FILE__) . '/includes/list-manager.php';
@@ -23,17 +25,19 @@ require_once dirname(__FILE__) . '/includes/subscriber-manager.php';
 require_once dirname(__FILE__) . '/includes/template-manager.php';
 require_once dirname(__FILE__) . '/includes/mailer.php';
 require_once dirname(__FILE__) . '/includes/campaign-manager.php';
-
-// --- NEW: Include Queue Manager ---
 require_once dirname(__FILE__) . '/includes/queue-manager.php';
 
+// --- NEW: Include Tracker Manager ---
+require_once dirname(__FILE__) . '/includes/tracker.php';
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Phase 4) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for Phase 5) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
     $campaign_manager = new MassMailerCampaignManager();
-    $queue_manager = new MassMailerQueueManager(); // Instantiate to call create table method
+    $queue_manager = new MassMailerQueueManager();
+    $tracker = new MassMailerTracker(); // Instantiate to call create table method
 
     // SQL to create tables (from your db-schema.sql) - Ensure these are idempotent (IF NOT EXISTS)
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
@@ -60,7 +64,7 @@ function mass_mailer_activate() {
         `joined_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`list_id`, `subscriber_id`),
         FOREIGN KEY (`list_id`) REFERENCES `" . MM_TABLE_PREFIX . "lists`(`list_id`) ON DELETE CASCADE,
-        FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX__ . "subscribers`(`subscriber_id`) ON DELETE CASCADE
+        FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
     try {
@@ -69,8 +73,9 @@ function mass_mailer_activate() {
         $db->query($sql_rel);
         $template_manager->createTemplateTable();
         $campaign_manager->createCampaignTable();
-        // NEW: Create queue table
         $queue_manager->createQueueTable();
+        // NEW: Create tracking tables
+        $tracker->createTrackingTables();
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -152,21 +157,12 @@ function mass_mailer_handle_form_submission() {
 // add_action('wp_ajax_mass_mailer_subscribe', 'mass_mailer_handle_form_submission'); // Example hook
 // add_action('wp_ajax_nopriv_mass_mailer_subscribe', 'mass_mailer_handle_form_submission'); // Example hook
 
-// Example simple routing for standalone app (for demonstration, not robust for production):
-// if (isset($_GET['action']) && $_GET['action'] === 'mass_mailer_subscribe') {
-//     mass_mailer_handle_form_submission();
-// }
 
-// --- NEW: Cron Job / Queue Processing Trigger (Conceptual) ---
-/**
- * Function to be triggered by a cron job or similar background process.
- * It initiates the processing of the email queue.
- */
+// --- Cron Job / Queue Processing Trigger (Existing from Phase 4) ---
 function mass_mailer_process_queue_cron() {
     $queue_manager = new MassMailerQueueManager();
     $queue_manager->processQueueBatch();
 }
-
 // Example of how you might schedule this in a WordPress environment:
 // if (!wp_next_scheduled('mass_mailer_queue_cron_hook')) {
 //     wp_schedule_event(time(), 'hourly', 'mass_mailer_queue_cron_hook'); // Schedule hourly
@@ -177,13 +173,81 @@ function mass_mailer_process_queue_cron() {
 // to hit a specific PHP script that executes `mass_mailer_process_queue_cron()`.
 // Example cron entry (on your server):
 // * * * * * /usr/bin/php /path/to/your/mass-mailer/cron-worker.php > /dev/null 2>&1
-// Where `cron-worker.php` would look like:
-/*
-<?php
-// cron-worker.php
-require_once dirname(__FILE__) . '/mass-mailer.php'; // Load your main plugin file
-mass_mailer_process_queue_cron();
-?>
-*/
+
+
+// --- NEW: Tracking Pixel and Click Redirect Endpoints ---
+/**
+ * Handles tracking of email opens and clicks.
+ * This function is designed to be hit directly by image requests (for opens)
+ * or link clicks (for redirects).
+ */
+function mass_mailer_handle_tracking() {
+    $tracker = new MassMailerTracker();
+    $campaign_id = isset($_GET['campaign_id']) ? intval($_GET['campaign_id']) : 0;
+    $subscriber_id = isset($_GET['subscriber_id']) ? intval($_GET['subscriber_id']) : 0;
+    $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
+    $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
+
+    if ($campaign_id > 0 && $subscriber_id > 0) {
+        if (isset($_GET['action'])) {
+            switch ($_GET['action']) {
+                case 'track_open':
+                    // Log the open
+                    $tracker->logOpen($campaign_id, $subscriber_id, $ip_address, $user_agent);
+                    // Serve a 1x1 transparent GIF
+                    header('Content-Type: image/gif');
+                    echo base64_decode('R0lGODlhAQABAJAAAP8AAAAAACH5BAUQAAAALAAAAAABAAEAAAICBAEAOw=='); // Transparent 1x1 GIF
+                    exit;
+                case 'track_click':
+                    $original_url_encoded = isset($_GET['url']) ? $_GET['url'] : '';
+                    $original_url = base66_decode(urldecode($original_url_encoded)); // Use base66_decode from mailer.php
+
+                    if (!empty($original_url)) {
+                        $tracker->logClick($campaign_id, $subscriber_id, $original_url, $ip_address, $user_agent);
+                        // Redirect to the original URL
+                        header('Location: ' . $original_url);
+                        exit;
+                    } else {
+                        // Handle invalid URL or missing parameters for click tracking
+                        error_log('MassMailer: Invalid URL for click tracking. campaign_id: ' . $campaign_id . ', subscriber_id: ' . $subscriber_id);
+                        // Redirect to a default page or show an error
+                        header('Location: /'); // Redirect to homepage or error page
+                        exit;
+                    }
+                case 'unsubscribe':
+                    $email_to_unsubscribe = isset($_GET['email']) ? filter_var($_GET['email'], FILTER_SANITIZE_EMAIL) : '';
+                    if (!empty($email_to_unsubscribe)) {
+                        $subscriber_manager = new MassMailerSubscriberManager();
+                        // Find subscriber by email and update status to 'unsubscribed'
+                        $subscriber = $subscriber_manager->getSubscriber($email_to_unsubscribe);
+                        if ($subscriber) {
+                            $subscriber_manager->addOrUpdateSubscriber($email_to_unsubscribe, null, null, 'unsubscribed');
+                            // Optionally remove from all lists or specific list if parameter provided
+                            // For simplicity, we'll just update main status to unsubscribed.
+                            echo "<h1>You have been successfully unsubscribed.</h1><p>You will no longer receive emails from us.</p>";
+                            error_log('MassMailer: Subscriber ' . $email_to_unsubscribe . ' unsubscribed.');
+                        } else {
+                            echo "<h1>Unsubscription failed.</h1><p>Subscriber not found.</p>";
+                            error_log('MassMailer: Unsubscribe failed, email not found: ' . $email_to_unsubscribe);
+                        }
+                    } else {
+                        echo "<h1>Unsubscription failed.</h1><p>Invalid unsubscribe request.</p>";
+                        error_log('MassMailer: Invalid unsubscribe request.');
+                    }
+                    exit;
+            }
+        }
+    }
+}
+
+// Simple routing for tracking and unsubscribe actions
+if (isset($_GET['action']) && in_array($_GET['action'], ['track_open', 'track_click', 'unsubscribe'])) {
+    mass_mailer_handle_tracking();
+}
+
+// Example simple routing for frontend form submission (existing)
+// if (isset($_GET['action']) && $_GET['action'] === 'mass_mailer_subscribe') {
+//     mass_mailer_handle_form_submission();
+// }
 
 ?>
