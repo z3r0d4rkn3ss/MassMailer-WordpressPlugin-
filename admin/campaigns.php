@@ -1,9 +1,9 @@
 <?php
 /**
- * Mass Mailer Admin Campaigns Page
+ * Mass Mailer Admin Campaigns Page - Phase 4 Updates
  *
- * This file provides the user interface for managing email campaigns
- * within the Mass Mailer admin area.
+ * This file updates the campaign management UI to integrate with the queue system.
+ * The "Send Now" action will now populate the queue.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -12,13 +12,16 @@
 // Ensure core files are loaded
 if (!class_exists('MassMailerCampaignManager')) {
     require_once dirname(__FILE__) . '/../includes/campaign-manager.php';
-    require_once dirname(__FILE__) . '/../includes/list-manager.php'; // To fetch lists for dropdown
-    require_once dirname(__FILE__) . '/../includes/template-manager.php'; // To fetch templates for dropdown
+    require_once dirname(__FILE__) . '/../includes/list-manager.php';
+    require_once dirname(__FILE__) . '/../includes/template-manager.php';
+    // NEW: Include Queue Manager
+    require_once dirname(__FILE__) . '/../includes/queue-manager.php';
 }
 
 $campaign_manager = new MassMailerCampaignManager();
 $list_manager = new MassMailerListManager();
 $template_manager = new MassMailerTemplateManager();
+$queue_manager = new MassMailerQueueManager(); // Instantiate Queue Manager
 
 $message = '';
 $message_type = ''; // 'success' or 'error'
@@ -41,12 +44,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($campaign_name) && $template_id > 0 && $list_id > 0 && !empty($subject)) {
                     $new_campaign_id = $campaign_manager->createCampaign($campaign_name, $template_id, $list_id, $subject, $send_at);
                     if ($new_campaign_id) {
-                        // Optionally set total recipients at creation time
-                        $subscribers_in_list = $list_manager->getAllSubscribers($list_id); // Assuming this method exists and works
-                        $campaign_manager->setTotalRecipients($new_campaign_id, count($subscribers_in_list));
-
-                        $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created successfully!';
-                        $message_type = 'success';
+                        // Populate queue immediately if not scheduled for future
+                        if (!$send_at || strtotime($send_at) <= time()) {
+                            $added_to_queue_count = $queue_manager->populateQueueFromCampaign($new_campaign_id);
+                            if ($added_to_queue_count !== false) {
+                                $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created and ' . $added_to_queue_count . ' emails added to queue!';
+                                $message_type = 'success';
+                                // Update campaign status to 'sending' if immediately sent
+                                $campaign_manager->updateCampaignStatus($new_campaign_id, 'sending');
+                            } else {
+                                $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created, but failed to add emails to queue.';
+                                $message_type = 'error';
+                            }
+                        } else {
+                            $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created and scheduled for ' . htmlspecialchars($send_at) . '!';
+                            $message_type = 'success';
+                        }
                     } else {
                         $message = 'Failed to create campaign. A campaign with this name might already exist or invalid IDs.';
                         $message_type = 'error';
@@ -95,16 +108,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $message_type = 'error';
                 }
                 break;
-            case 'send_now': // Conceptual "Send Now" action
+            case 'send_now':
                 $campaign_id = isset($_POST['campaign_id']) ? intval($_POST['campaign_id']) : 0;
                 if ($campaign_id > 0) {
-                    // In Phase 4, this will trigger the queue system.
-                    // For now, we'll just conceptually mark it as 'sending'.
-                    if ($campaign_manager->updateCampaignStatus($campaign_id, 'sending')) {
-                        $message = 'Campaign marked for sending. (Actual sending will be handled by the queue system in Phase 4)';
-                        $message_type = 'success';
+                    $campaign = $campaign_manager->getCampaign($campaign_id);
+                    if ($campaign && ($campaign['status'] === 'draft' || $campaign['status'] === 'paused' || $campaign['status'] === 'scheduled')) {
+                        // Mark campaign as sending and populate queue
+                        if ($campaign_manager->updateCampaignStatus($campaign_id, 'sending')) {
+                            $added_to_queue_count = $queue_manager->populateQueueFromCampaign($campaign_id);
+                            if ($added_to_queue_count !== false) {
+                                $message = 'Campaign "' . htmlspecialchars($campaign['campaign_name']) . '" marked for sending and ' . $added_to_queue_count . ' emails added to queue!';
+                                $message_type = 'success';
+                            } else {
+                                $message = 'Campaign "' . htmlspecialchars($campaign['campaign_name']) . '" marked for sending, but failed to add emails to queue.';
+                                $message_type = 'error';
+                                // Revert status if queue population failed
+                                $campaign_manager->updateCampaignStatus($campaign_id, 'paused');
+                            }
+                        } else {
+                            $message = 'Failed to update campaign status to "sending".';
+                            $message_type = 'error';
+                        }
                     } else {
-                        $message = 'Failed to mark campaign for sending.';
+                        $message = 'Campaign cannot be sent. It must be in draft, paused, or scheduled status.';
                         $message_type = 'error';
                     }
                 } else {
@@ -255,8 +281,10 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                                     <button type="submit" class="delete">Delete</button>
                                 </form>
 
-                                <?php if ($campaign['status'] === 'draft' || $campaign['status'] === 'paused' || $campaign['status'] === 'scheduled'): ?>
-                                <form method="POST" action="" style="display:inline-block;" onsubmit="return confirm('Are you sure you want to send this campaign now? This will initiate the sending process.');">
+                                <?php
+                                $can_send = in_array($campaign['status'], ['draft', 'paused', 'scheduled']);
+                                if ($can_send): ?>
+                                <form method="POST" action="" style="display:inline-block;" onsubmit="return confirm('Are you sure you want to send this campaign now? This will add all list subscribers to the queue.');">
                                     <input type="hidden" name="action" value="send_now">
                                     <input type="hidden" name="campaign_id" value="<?php echo htmlspecialchars($campaign['campaign_id']); ?>">
                                     <button type="submit" class="send-now">Send Now</button>
