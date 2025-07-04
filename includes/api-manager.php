@@ -23,7 +23,8 @@ class MassMailerAPIManager {
 
     public function __construct() {
         $this->db = MassMailerDB::getInstance();
-        $this->api_keys_table = MM_TABLE_PREFIX . 'api_keys'; // New table for API keys
+        global $wpdb; // Use WordPress's global $wpdb for prefix consistency
+        $this->api_keys_table = $wpdb->prefix . 'mm_api_keys'; // Use WP prefix + mm_
         $this->auth = new MassMailerAuth();
     }
 
@@ -36,12 +37,10 @@ class MassMailerAPIManager {
             `api_key_id` INT AUTO_INCREMENT PRIMARY KEY,
             `api_key` VARCHAR(64) NOT NULL UNIQUE, -- SHA256 hash length
             `user_id` INT NULL, -- Link to the user who created/owns the key
-            `description` VARCHAR(255) NULL, -- e.g., "CRM Integration", "Website Form"
+            `description` VARCHAR(255) NULL, 
             `status` ENUM('active', 'inactive') DEFAULT 'active',
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            `last_used_at` TIMESTAMP NULL,
-            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (`user_id`) REFERENCES " . MM_TABLE_PREFIX . "users(`user_id`) ON DELETE SET NULL
+            `last_used_at` TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
         try {
             $this->db->query($sql);
@@ -54,36 +53,32 @@ class MassMailerAPIManager {
     }
 
     /**
-     * Generates a cryptographically secure random API key.
-     *
-     * @return string The generated API key.
+     * Generates a unique API key.
+     * @return string A 64-character hexadecimal API key.
      */
-    private function generateUniqueApiKey() {
+    private function generateApiKey() {
         return bin2hex(random_bytes(32)); // Generates a 64-character hex string
     }
 
     /**
-     * Creates a new API key for a user.
+     * Create a new API key.
      *
-     * @param int $user_id The ID of the user creating the key.
-     * @param string $description A description for the API key.
+     * @param int|null $user_id The ID of the user creating the key (optional).
+     * @param string $description A description for the key (e.g., "CRM Integration").
+     * @param string $status The status of the key ('active' or 'inactive').
      * @return string|false The new API key string on success, false on failure.
      */
-    public function createApiKey($user_id, $description = '') {
-        if (empty($user_id)) {
-            error_log('MassMailerAPIManager: User ID is required to create an API key.');
-            return false;
-        }
-
-        $api_key = $this->generateUniqueApiKey();
+    public function createApiKey($user_id, $description = '', $status = 'active') {
+        $api_key = $this->generateApiKey();
         try {
-            $sql = "INSERT INTO {$this->api_keys_table} (api_key, user_id, description) VALUES (:api_key, :user_id, :description)";
-            $this->db->query($sql, [
+            $sql = "INSERT INTO {$this->api_keys_table} (api_key, user_id, description, status) VALUES (:api_key, :user_id, :description, :status)";
+            $stmt = $this->db->query($sql, [
                 ':api_key' => $api_key,
                 ':user_id' => $user_id,
-                ':description' => $description
+                ':description' => $description,
+                ':status' => $status
             ]);
-            return $api_key;
+            return $stmt->rowCount() > 0 ? $api_key : false;
         } catch (PDOException $e) {
             error_log('MassMailerAPIManager: Error creating API key: ' . $e->getMessage());
             return false;
@@ -91,31 +86,31 @@ class MassMailerAPIManager {
     }
 
     /**
-     * Retrieves a single API key by its ID.
+     * Get an API key by its ID.
      *
      * @param int $api_key_id The ID of the API key.
-     * @return array|false API key data on success, false if not found.
+     * @return array|false API key data if found, false otherwise.
      */
     public function getApiKey($api_key_id) {
         if (empty($api_key_id)) {
             return false;
         }
-        $sql = "SELECT ak.*, u.username FROM {$this->api_keys_table} ak LEFT JOIN " . MM_TABLE_PREFIX . "users u ON ak.user_id = u.user_id WHERE ak.api_key_id = :api_key_id";
+        $sql = "SELECT * FROM {$this->api_keys_table} WHERE api_key_id = :api_key_id";
         try {
             return $this->db->fetch($sql, [':api_key_id' => $api_key_id]);
         } catch (PDOException $e) {
-            error_log('MassMailerAPIManager: Error getting API key by ID: ' . $e->getMessage());
+            error_log('MassMailerAPIManager: Error getting API key: ' . $e->getMessage());
             return false;
         }
     }
 
     /**
-     * Retrieves all API keys.
+     * Get all API keys.
      *
-     * @return array An array of all API key data, or an empty array.
+     * @return array An array of all API keys.
      */
     public function getAllApiKeys() {
-        $sql = "SELECT ak.*, u.username FROM {$this->api_keys_table} ak LEFT JOIN " . MM_TABLE_PREFIX . "users u ON ak.user_id = u.user_id ORDER BY ak.created_at DESC";
+        $sql = "SELECT * FROM {$this->api_keys_table} ORDER BY created_at DESC";
         try {
             return $this->db->fetchAll($sql);
         } catch (PDOException $e) {
@@ -125,7 +120,7 @@ class MassMailerAPIManager {
     }
 
     /**
-     * Updates an existing API key's description or status.
+     * Update an existing API key's description and status.
      *
      * @param int $api_key_id The ID of the API key to update.
      * @param string $description The new description.
@@ -133,8 +128,8 @@ class MassMailerAPIManager {
      * @return bool True on success, false on failure.
      */
     public function updateApiKey($api_key_id, $description, $status) {
-        if (empty($api_key_id) || empty($description) || !in_array($status, ['active', 'inactive'])) {
-            error_log('MassMailerAPIManager: Missing or invalid parameters for API key update.');
+        if (empty($api_key_id)) {
+            error_log('MassMailerAPIManager: API Key ID cannot be empty for update.');
             return false;
         }
         try {
@@ -152,7 +147,7 @@ class MassMailerAPIManager {
     }
 
     /**
-     * Deletes an API key.
+     * Delete an API key.
      *
      * @param int $api_key_id The ID of the API key to delete.
      * @return bool True on success, false on failure.
