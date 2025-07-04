@@ -1,8 +1,8 @@
 <?php
 /**
- * Mass Mailer Admin Settings Page - Bounce Settings Update
+ * Mass Mailer Admin Settings Page - API Key Management Update
  *
- * This file updates the settings UI to include configuration for bounce and complaint handling.
+ * This file updates the settings UI to include configuration for API keys.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -23,12 +23,18 @@ if (!$auth->hasRole('admin')) {
     die('Access Denied. You must be an administrator to view this page.');
 }
 
-// Ensure settings manager is loaded
+// Ensure managers are loaded
 if (!class_exists('MassMailerSettingsManager')) {
     require_once dirname(__FILE__) . '/../includes/settings-manager.php';
 }
+// NEW: Include API Manager
+if (!class_exists('MassMailerAPIManager')) {
+    require_once dirname(__FILE__) . '/../includes/api-manager.php';
+}
 
 $settings_manager = new MassMailerSettingsManager();
+$api_manager = new MassMailerAPIManager(); // Instantiate API Manager
+
 $message = '';
 $message_type = '';
 
@@ -61,7 +67,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         if ($settings_manager->setSetting('smtp_username', trim($_POST['smtp_username']))) $updated_count++;
     }
     if (isset($_POST['smtp_password'])) {
-        // Only update password if it's not empty (allow leaving blank to keep current)
         if (!empty($_POST['smtp_password'])) {
             if ($settings_manager->setSetting('smtp_password', $_POST['smtp_password'])) $updated_count++;
         }
@@ -75,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         if ($settings_manager->setSetting('tracking_base_url', trim($_POST['tracking_base_url']))) $updated_count++;
     }
 
-    // NEW: Bounce Handling Settings
+    // Bounce Handling Settings
     if (isset($_POST['bounce_handling_enabled'])) {
         if ($settings_manager->setSetting('bounce_handling_enabled', $_POST['bounce_handling_enabled'] === '1' ? '1' : '0')) $updated_count++;
     }
@@ -107,6 +112,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     }
 }
 
+// Handle API Key actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['api_action'])) {
+    $current_user = $auth->getCurrentUser();
+    $user_id = $current_user['user_id'] ?? null;
+
+    if (!$user_id) {
+        $message = 'Error: User not logged in or user ID not found.';
+        $message_type = 'error';
+    } else {
+        switch ($_POST['api_action']) {
+            case 'generate_api_key':
+                $description = isset($_POST['api_key_description']) ? trim($_POST['api_key_description']) : '';
+                $new_key = $api_manager->createApiKey($user_id, $description);
+                if ($new_key) {
+                    $message = 'New API Key generated: <code>' . htmlspecialchars($new_key) . '</code>. Please copy it now as it will not be shown again!';
+                    $message_type = 'success';
+                } else {
+                    $message = 'Failed to generate API Key.';
+                    $message_type = 'error';
+                }
+                break;
+
+            case 'update_api_key':
+                $api_key_id = isset($_POST['api_key_id']) ? intval($_POST['api_key_id']) : 0;
+                $description = isset($_POST['edit_api_key_description']) ? trim($_POST['edit_api_key_description']) : '';
+                $status = isset($_POST['edit_api_key_status']) ? trim($_POST['edit_api_key_status']) : '';
+                if ($api_key_id > 0 && !empty($description) && !empty($status)) {
+                    if ($api_manager->updateApiKey($api_key_id, $description, $status)) {
+                        $message = 'API Key updated successfully!';
+                        $message_type = 'success';
+                    } else {
+                        $message = 'Failed to update API Key.';
+                        $message_type = 'error';
+                    }
+                } else {
+                    $message = 'Invalid parameters for API Key update.';
+                    $message_type = 'error';
+                }
+                break;
+
+            case 'delete_api_key':
+                $api_key_id = isset($_POST['api_key_id']) ? intval($_POST['api_key_id']) : 0;
+                if ($api_key_id > 0) {
+                    if ($api_manager->deleteApiKey($api_key_id)) {
+                        $message = 'API Key deleted successfully!';
+                        $message_type = 'success';
+                    } else {
+                        $message = 'Failed to delete API Key.';
+                        $message_type = 'error';
+                    }
+                } else {
+                    $message = 'Invalid API Key ID for deletion.';
+                    $message_type = 'error';
+                }
+                break;
+        }
+    }
+}
+
+
 // Retrieve current settings
 $current_settings = $settings_manager->getAllSettings();
 
@@ -124,13 +189,16 @@ $smtp_encryption = $current_settings['smtp_encryption'] ?? 'tls';
 
 $tracking_base_url = $current_settings['tracking_base_url'] ?? 'http://localhost/mass-mailer/mass-mailer.php'; // Default fallback
 
-// NEW: Bounce Handling Defaults
+// Bounce Handling Defaults
 $bounce_handling_enabled = $current_settings['bounce_handling_enabled'] ?? '0';
 $bounce_imap_host = $current_settings['bounce_imap_host'] ?? '';
 $bounce_imap_port = $current_settings['bounce_imap_port'] ?? 993;
 $bounce_imap_username = $current_settings['bounce_imap_username'] ?? '';
 $bounce_imap_password = ''; // Never pre-fill password fields for security
 $bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novalidate-cert';
+
+// Fetch all API keys for display
+$all_api_keys = $api_manager->getAllApiKeys();
 
 ?>
 <!DOCTYPE html>
@@ -143,6 +211,7 @@ $bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novali
         body { font-family: 'Inter', sans-serif; margin: 20px; background-color: #f0f2f5; color: #333; }
         .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
         h1 { color: #007cba; border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 30px; }
+        h2 { color: #007cba; margin-top: 30px; margin-bottom: 20px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
         .message { padding: 10px 15px; border-radius: 5px; margin-bottom: 20px; font-weight: bold; }
         .message.success { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
         .message.error { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
@@ -164,6 +233,17 @@ $bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novali
         button[type="submit"] { background-color: #007cba; color: #fff; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 1.1em; transition: background-color 0.2s; }
         button[type="submit"]:hover { background-color: #005f93; }
         .info-text { font-size: 0.85em; color: #666; margin-top: 5px; }
+
+        .api-key-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .api-key-table th, .api-key-table td { border: 1px solid #eee; padding: 10px; text-align: left; }
+        .api-key-table th { background-color: #f2f2f2; font-weight: 600; color: #555; }
+        .api-key-table tr:nth-child(even) { background-color: #f9f9f9; }
+        .api-key-table code { background-color: #eef; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
+        .action-buttons button { margin-right: 5px; padding: 6px 12px; font-size: 0.85em; border-radius: 4px; }
+        .action-buttons .edit { background-color: #ffc107; color: #333; }
+        .action-buttons .edit:hover { background-color: #e0a800; }
+        .action-buttons .delete { background-color: #dc3545; color: #fff; }
+        .action-buttons .delete:hover { background-color: #c82333; }
     </style>
 </head>
 <body>
@@ -172,7 +252,7 @@ $bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novali
 
         <?php if ($message): ?>
             <div class="message <?php echo $message_type; ?>">
-                <?php echo htmlspecialchars($message); ?>
+                <?php echo $message; ?>
             </div>
         <?php endif; ?>
 
@@ -284,9 +364,90 @@ $bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novali
                 </div>
             </section>
 
-            <button type="submit" name="save_settings">Save Settings</button>
+            <button type="submit" name="save_settings">Save General Settings</button>
         </form>
-    </div>
+
+        <section>
+            <h2>API Key Management</h2>
+            <p class="info-text">Generate and manage API keys for external applications to interact with your Mass Mailer.</p>
+
+            <h3>Generate New API Key</h3>
+            <form method="POST" action="">
+                <input type="hidden" name="api_action" value="generate_api_key">
+                <div class="form-group">
+                    <label for="api_key_description">Description:</label>
+                    <input type="text" id="api_key_description" name="api_key_description" placeholder="e.g., CRM Integration, Website Form" required>
+                </div>
+                <button type="submit">Generate API Key</button>
+            </form>
+
+            <h3>Existing API Keys</h3>
+            <?php if (empty($all_api_keys)): ?>
+                <p>No API keys found. Generate one above!</p>
+            <?php else: ?>
+                <table class="api-key-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>API Key</th>
+                            <th>Description</th>
+                            <th>Created By</th>
+                            <th>Status</th>
+                            <th>Last Used</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($all_api_keys as $key): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($key['api_key_id']); ?></td>
+                                <td><code><?php echo htmlspecialchars($key['api_key']); ?></code></td>
+                                <td><?php echo htmlspecialchars($key['description']); ?></td>
+                                <td><?php echo htmlspecialchars($key['username'] ?? 'N/A'); ?></td>
+                                <td><?php echo htmlspecialchars(ucfirst($key['status'])); ?></td>
+                                <td><?php echo $key['last_used_at'] ? htmlspecialchars($key['last_used_at']) : 'Never'; ?></td>
+                                <td class="action-buttons">
+                                    <button class="edit" onclick="showEditApiKeyForm(
+                                        <?php echo htmlspecialchars($key['api_key_id']); ?>,
+                                        '<?php echo addslashes(htmlspecialchars($key['description'])); ?>',
+                                        '<?php echo htmlspecialchars($key['status']); ?>'
+                                    )">Edit</button>
+                                    <form method="POST" action="" style="display:inline-block;" onsubmit="return confirm('Are you sure you want to delete this API Key? This action cannot be undone.');">
+                                        <input type="hidden" name="api_action" value="delete_api_key">
+                                        <input type="hidden" name="api_key_id" value="<?php echo htmlspecialchars($key['api_key_id']); ?>">
+                                        <button type="submit" class="delete">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+                <!-- Edit API Key Modal/Form (hidden by default) -->
+                <div id="editApiKeyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                    <div style="background:#fff; padding:30px; border-radius:8px; width:500px; max-height: 90vh; overflow-y: auto; box-shadow:0 5px 15px rgba(0,0,0,0.2);">
+                        <h3>Edit API Key</h3>
+                        <form method="POST" action="">
+                            <input type="hidden" name="api_action" value="update_api_key">
+                            <input type="hidden" id="edit_api_key_id" name="api_key_id">
+                            <div class="form-group">
+                                <label for="edit_api_key_description">Description:</label>
+                                <input type="text" id="edit_api_key_description" name="edit_api_key_description" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="edit_api_key_status">Status:</label>
+                                <select id="edit_api_key_status" name="edit_api_key_status">
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                </select>
+                            </div>
+                            <button type="submit">Update API Key</button>
+                            <button type="button" onclick="document.getElementById('editApiKeyModal').style.display='none';">Cancel</button>
+                        </form>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </section>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -319,6 +480,13 @@ $bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novali
             toggleSmtpSettings();
             toggleBounceSettings(bounceHandlingEnabledSelect.value);
         });
+
+        function showEditApiKeyForm(id, description, status) {
+            document.getElementById('edit_api_key_id').value = id;
+            document.getElementById('edit_api_key_description').value = description;
+            document.getElementById('edit_api_key_status').value = status;
+            document.getElementById('editApiKeyModal').style.display = 'flex';
+        }
     </script>
 </body>
 </html>
