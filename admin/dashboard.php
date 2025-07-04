@@ -4,13 +4,29 @@
  *
  * This file serves as the main entry point for the Mass Mailer admin area.
  * It provides an overview and navigation links to other admin pages.
+ * Now includes authentication check.
  *
  * @package Mass_Mailer
  * @subpackage Admin
  */
 
-// This is a placeholder for your main admin dashboard.
-// In a real application, you'd likely have authentication checks here.
+// Start session
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Ensure auth class is loaded
+require_once dirname(__FILE__) . '/../includes/auth.php';
+$auth = new MassMailerAuth();
+
+// Redirect to login page if not authenticated
+if (!$auth->isLoggedIn()) {
+    header('Location: login.php');
+    exit;
+}
+
+// Get current user details for display
+$current_user = $auth->getCurrentUser();
 
 ?>
 <!DOCTYPE html>
@@ -23,6 +39,9 @@
         body { font-family: 'Inter', sans-serif; margin: 20px; background-color: #f0f2f5; color: #333; }
         .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
         h1 { color: #007cba; border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 30px; }
+        .user-info { text-align: right; margin-bottom: 20px; font-size: 0.9em; color: #666; }
+        .user-info a { color: #dc3545; text-decoration: none; margin-left: 10px; }
+        .user-info a:hover { text-decoration: underline; }
         .nav-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
         .nav-item { background-color: #e9f7fe; padding: 25px; border-radius: 8px; text-align: center; border: 1px solid #d0effd; transition: transform 0.2s, box-shadow 0.2s; }
         .nav-item:hover { transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
@@ -32,6 +51,10 @@
 </head>
 <body>
     <div class="container">
+        <div class="user-info">
+            Logged in as: <strong><?php echo htmlspecialchars($current_user['username']); ?></strong> (<?php echo htmlspecialchars(ucfirst($current_user['role'])); ?>)
+            <a href="login.php?action=logout">Logout</a>
+        </div>
         <h1>Mass Mailer Dashboard</h1>
 
         <div class="nav-grid">
