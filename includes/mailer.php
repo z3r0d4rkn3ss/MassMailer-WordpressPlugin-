@@ -1,8 +1,9 @@
 <?php
 /**
- * Mass Mailer Mailer Class - Phase 5 Updates
+ * Mass Mailer Mailer Class - Phase 6 Updates
  *
- * This file updates the core mailer logic to integrate email open and click tracking.
+ * This file updates the core mailer logic to use settings from the database
+ * and conceptually integrate with PHPMailer for more robust sending.
  *
  * @package Mass_Mailer
  * @subpackage Includes
@@ -18,32 +19,44 @@ if (!class_exists('MassMailerTemplateManager')) {
 if (!class_exists('MassMailerSubscriberManager')) {
     require_once dirname(__FILE__) . '/subscriber-manager.php';
 }
-// NEW: Include Tracker Manager
 if (!class_exists('MassMailerTracker')) {
     require_once dirname(__FILE__) . '/tracker.php';
 }
+// NEW: Include Settings Manager
+if (!class_exists('MassMailerSettingsManager')) {
+    require_once dirname(__FILE__) . '/settings-manager.php';
+}
+
+// NEW: Include PHPMailer (Conceptual - you'll need to download and include it)
+// require_once 'path/to/PHPMailer/src/PHPMailer.php';
+// require_once 'path/to/PHPMailer/src/SMTP.php';
+// require_once 'path/to/PHPMailer/src/Exception.php';
+// use PHPMailer\PHPMailer\PHPMailer;
+// use PHPMailer\PHPMailer\SMTP;
+// use PHPMailer\PHPMailer\Exception;
+
 
 class MassMailerMailer {
     private $db;
     private $template_manager;
     private $subscriber_manager;
-    private $tracker; // New tracker instance
+    private $tracker;
+    private $settings_manager; // New settings instance
 
-    // Base URL for tracking pixel and click redirects
-    // IMPORTANT: Replace with your actual domain where mass-mailer.php is accessible
-    // e.g., 'http://yourdomain.com/mass-mailer.php'
-    const TRACKING_BASE_URL = 'http://localhost/mass-mailer/mass-mailer.php'; // Adjust this for your setup!
+    // TRACKING_BASE_URL will now be fetched from settings
+    // const TRACKING_BASE_URL = 'http://localhost/mass-mailer/mass-mailer.php'; // Old hardcoded value
 
     public function __construct() {
         $this->db = MassMailerDB::getInstance();
         $this->template_manager = new MassMailerTemplateManager();
         $this->subscriber_manager = new MassMailerSubscriberManager();
-        $this->tracker = new MassMailerTracker(); // Initialize tracker
+        $this->tracker = new MassMailerTracker();
+        $this->settings_manager = new MassMailerSettingsManager(); // Initialize settings
     }
 
     /**
-     * Sends a single email to a recipient.
-     * This is a basic simulation. In production, use a proper mailer library.
+     * Sends a single email to a recipient using configured mailer type.
+     * Integrates conceptually with PHPMailer if SMTP is chosen.
      *
      * @param string $to_email The recipient's email address.
      * @param string $subject The email subject.
@@ -59,17 +72,78 @@ class MassMailerMailer {
             return false;
         }
 
-        // Default headers
+        // Get sender details from settings
+        $from_name = $this->settings_manager->getSetting('default_from_name', 'Mass Mailer');
+        $from_email = $this->settings_manager->getSetting('default_from_email', 'noreply@example.com');
+        $reply_to_email = $this->settings_manager->getSetting('reply_to_email', $from_email);
+        $mailer_type = $this->settings_manager->getSetting('mailer_type', 'php_mail');
+
+        if ($mailer_type === 'smtp') {
+            // --- Conceptual PHPMailer Integration ---
+            // You would need to download PHPMailer and adjust the require_once paths above.
+            // try {
+            //     $mail = new PHPMailer(true); // Enable exceptions
+            //     $mail->isSMTP();
+            //     $mail->Host       = $this->settings_manager->getSetting('smtp_host');
+            //     $mail->SMTPAuth   = true;
+            //     $mail->Username   = $this->settings_manager->getSetting('smtp_username');
+            //     $mail->Password   = $this->settings_manager->getSetting('smtp_password');
+            //     $mail->SMTPSecure = $this->settings_manager->getSetting('smtp_encryption');
+            //     $mail->Port       = $this->settings_manager->getSetting('smtp_port');
+
+            //     $mail->setFrom($from_email, $from_name);
+            //     $mail->addAddress($to_email);
+            //     $mail->addReplyTo($reply_to_email, $from_name);
+
+            //     $mail->isHTML(true);
+            //     $mail->Subject = $subject;
+            //     $mail->Body    = $html_body;
+            //     $mail->AltBody = $text_body; // Plain text for non-HTML clients
+
+            //     // Add any custom headers from $headers array
+            //     foreach ($headers as $key => $value) {
+            //         $mail->addCustomHeader($key, $value);
+            //     }
+
+            //     $mail->send();
+            //     error_log('MassMailerMailer: SMTP Email sent successfully to ' . $to_email);
+            //     return true;
+            // } catch (Exception $e) {
+            //     error_log('MassMailerMailer: SMTP Email failed to send to ' . $to_email . '. Mailer Error: ' . $mail->ErrorInfo . ' | Exception: ' . $e->getMessage());
+            //     return false;
+            // }
+            error_log('MassMailerMailer: SMTP selected, but PHPMailer integration is conceptual. Using PHP mail() fallback.');
+            // Fallback to PHP mail() if PHPMailer is not fully integrated/configured
+            return $this->sendEmailWithPhpMail($to_email, $subject, $html_body, $text_body, $from_name, $from_email, $reply_to_email, $headers);
+
+        } else { // Default to php_mail
+            return $this->sendEmailWithPhpMail($to_email, $subject, $html_body, $text_body, $from_name, $from_email, $reply_to_email, $headers);
+        }
+    }
+
+    /**
+     * Internal function to send email using PHP's native mail() function.
+     *
+     * @param string $to_email
+     * @param string $subject
+     * @param string $html_body
+     * @param string $text_body
+     * @param string $from_name
+     * @param string $from_email
+     * @param string $reply_to_email
+     * @param array $custom_headers
+     * @return bool
+     */
+    private function sendEmailWithPhpMail($to_email, $subject, $html_body, $text_body, $from_name, $from_email, $reply_to_email, $custom_headers = []) {
         $default_headers = [
             'MIME-Version: 1.0',
-            'Content-type: text/html; charset=UTF-8',
-            'From: Your Name <your_email@example.com>', // IMPORTANT: Change this to a valid sender email
-            'Reply-To: your_email@example.com', // IMPORTANT: Change this
+            'From: ' . $from_name . ' <' . $from_email . '>',
+            'Reply-To: ' . $reply_to_email,
             'X-Mailer: PHP/' . phpversion()
         ];
 
         // Merge custom headers, allowing overrides
-        foreach ($headers as $key => $value) {
+        foreach ($custom_headers as $key => $value) {
             $found = false;
             foreach ($default_headers as $i => $default_header) {
                 if (stripos($default_header, $key . ':') === 0) {
@@ -88,6 +162,8 @@ class MassMailerMailer {
         // For plain text alternative (good practice for email clients that don't render HTML)
         $boundary = md5(time());
         $final_headers = str_replace('Content-type: text/html', 'Content-type: multipart/alternative; boundary="' . $boundary . '"', $final_headers);
+        $final_headers .= "\r\nContent-type: multipart/alternative; boundary=\"{$boundary}\"";
+
 
         $message_body = "--" . $boundary . "\r\n";
         $message_body .= "Content-Type: text/plain; charset=UTF-8\r\n";
@@ -100,15 +176,13 @@ class MassMailerMailer {
         $message_body .= $html_body . "\r\n\r\n";
         $message_body .= "--" . $boundary . "--";
 
-        // PHP's mail() function. This requires your server to be configured to send mail.
-        // For robust sending, consider SMTP libraries (PHPMailer, SwiftMailer) or transactional email services (SendGrid, Mailgun).
         $mail_sent = mail($to_email, '=?UTF-8?B?' . base64_encode($subject) . '?=', $message_body, $final_headers);
 
         if ($mail_sent) {
-            error_log('MassMailerMailer: Email sent successfully to ' . $to_email);
+            error_log('MassMailerMailer: PHP mail() sent successfully to ' . $to_email);
             return true;
         } else {
-            error_log('MassMailerMailer: Failed to send email to ' . $to_email . '. Check server mail configuration.');
+            error_log('MassMailerMailer: PHP mail() failed to send to ' . $to_email . '. Check server mail configuration.');
             return false;
         }
     }
@@ -144,7 +218,7 @@ class MassMailerMailer {
             '{{first_name}}'       => htmlspecialchars($subscriber['first_name'] ?? ''),
             '{{last_name}}'        => htmlspecialchars($subscriber['last_name'] ?? ''),
             '{{email}}'            => htmlspecialchars($subscriber['email']),
-            '{{unsubscribe_link}}' => self::TRACKING_BASE_URL . '?action=unsubscribe&email=' . urlencode($subscriber['email']) // Unsubscribe link
+            '{{unsubscribe_link}}' => $this->settings_manager->getSetting('tracking_base_url', self::TRACKING_BASE_URL) . '?action=unsubscribe&email=' . urlencode($subscriber['email']) // Unsubscribe link
         ];
 
         $html_body = str_replace(
@@ -165,11 +239,11 @@ class MassMailerMailer {
             $campaign_subject
         );
 
-        // --- NEW: Add Tracking Pixel for Opens ---
-        $tracking_pixel = '<img src="' . self::TRACKING_BASE_URL . '?action=track_open&campaign_id=' . $campaign_id . '&subscriber_id=' . $subscriber_id . '" width="1" height="1" border="0" style="display:none !important; visibility:hidden !important; mso-hide:all;">';
+        // --- Add Tracking Pixel for Opens ---
+        $tracking_pixel = '<img src="' . $this->settings_manager->getSetting('tracking_base_url', self::TRACKING_BASE_URL) . '?action=track_open&campaign_id=' . $campaign_id . '&subscriber_id=' . $subscriber_id . '" width="1" height="1" border="0" style="display:none !important; visibility:hidden !important; mso-hide:all;">';
         $html_body = $html_body . $tracking_pixel; // Append pixel to the end of HTML body
 
-        // --- NEW: Wrap Links for Click Tracking ---
+        // --- Wrap Links for Click Tracking ---
         $html_body = $this->wrapLinksForTracking($html_body, $campaign_id, $subscriber_id);
 
 
@@ -190,9 +264,9 @@ class MassMailerMailer {
      * @return string The HTML content with wrapped links.
      */
     private function wrapLinksForTracking($html_content, $campaign_id, $subscriber_id) {
-        // Regex to find all href attributes in anchor tags
-        // This regex is basic and might need refinement for complex HTML structures.
-        return preg_replace_callback('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']([^>]*)>/i', function($matches) use ($campaign_id, $subscriber_id) {
+        $tracking_base_url = $this->settings_manager->getSetting('tracking_base_url', self::TRACKING_BASE_URL);
+
+        return preg_replace_callback('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']([^>]*)>/i', function($matches) use ($campaign_id, $subscriber_id, $tracking_base_url) {
             $original_url = $matches[1];
             $other_attributes = $matches[2];
 
@@ -202,8 +276,8 @@ class MassMailerMailer {
             }
 
             // Encode the original URL and parameters for the tracking redirect
-            $encoded_url = urlencode(base66_encode($original_url)); // Base66 is conceptual, use base64_encode for real
-            $tracking_url = self::TRACKING_BASE_URL . '?action=track_click&campaign_id=' . $campaign_id . '&subscriber_id=' . $subscriber_id . '&url=' . $encoded_url;
+            $encoded_url = urlencode(base66_encode($original_url));
+            $tracking_url = $tracking_base_url . '?action=track_click&campaign_id=' . $campaign_id . '&subscriber_id=' . $subscriber_id . '&url=' . $encoded_url;
 
             return '<a href="' . htmlspecialchars($tracking_url) . '"' . $other_attributes . '>';
         }, $html_content);
