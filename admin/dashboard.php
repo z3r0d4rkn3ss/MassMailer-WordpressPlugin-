@@ -4,7 +4,7 @@
  *
  * This file serves as the main entry point for the Mass Mailer admin area.
  * It provides an overview and navigation links to other admin pages.
- * Now includes authentication check.
+ * Now includes authentication check and a link to the Bounce Log.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -81,6 +81,10 @@ $current_user = $auth->getCurrentUser();
             <div class="nav-item">
                 <a href="automations.php">Manage Automations</a>
                 <p>Set up automated email workflows.</p>
+            </div>
+            <div class="nav-item">
+                <a href="bounces.php">Bounce Log</a>
+                <p>Review bounced emails and complaints.</p>
             </div>
             <div class="nav-item">
                 <a href="settings.php">Settings</a>
