@@ -1,11 +1,8 @@
 <?php
 /**
- * Mass Mailer Mailer Class
+ * Mass Mailer Mailer Class - Phase 4 Updates
  *
- * This file contains the core logic for sending emails.
- * For demonstration, it uses a basic mail() function simulation.
- * In a real-world application, this would integrate with a robust
- * mailer library like PHPMailer or Symfony Mailer, or an API like SendGrid/Mailgun.
+ * This file updates the core mailer logic to be used by the queue system.
  *
  * @package Mass_Mailer
  * @subpackage Includes
@@ -107,12 +104,14 @@ class MassMailerMailer {
 
     /**
      * Sends an email using a saved template to a specific subscriber.
+     * This version now accepts a campaign-specific subject.
      *
      * @param int $template_id The ID of the template to use.
      * @param int $subscriber_id The ID of the subscriber to send to.
+     * @param string $campaign_subject The subject line for this specific campaign.
      * @return bool True on success, false on failure.
      */
-    public function sendTemplateEmailToSubscriber($template_id, $subscriber_id) {
+    public function sendTemplateEmailToSubscriber($template_id, $subscriber_id, $campaign_subject) {
         $template = $this->template_manager->getTemplate($template_id);
         $subscriber = $this->subscriber_manager->getSubscriber($subscriber_id);
 
@@ -124,41 +123,42 @@ class MassMailerMailer {
             error_log('MassMailerMailer: Subscriber with ID ' . $subscriber_id . ' not found.');
             return false;
         }
+        if ($subscriber['status'] !== 'subscribed') {
+            error_log('MassMailerMailer: Subscriber ' . $subscriber['email'] . ' is not in "subscribed" status. Skipping email.');
+            return false;
+        }
 
-        // Basic personalization (replace placeholders)
+        // Personalization (replace placeholders)
+        $replacements = [
+            '{{first_name}}' => htmlspecialchars($subscriber['first_name'] ?? ''),
+            '{{last_name}}'  => htmlspecialchars($subscriber['last_name'] ?? ''),
+            '{{email}}'      => htmlspecialchars($subscriber['email']),
+            // Add more placeholders as needed, e.g., unsubscribe link
+            '{{unsubscribe_link}}' => 'http://yourdomain.com/unsubscribe.php?email=' . urlencode($subscriber['email']) // Placeholder for now
+        ];
+
         $html_body = str_replace(
-            ['{{first_name}}', '{{last_name}}', '{{email}}'],
-            [
-                htmlspecialchars($subscriber['first_name'] ?? ''),
-                htmlspecialchars($subscriber['last_name'] ?? ''),
-                htmlspecialchars($subscriber['email'])
-            ],
+            array_keys($replacements),
+            array_values($replacements),
             $template['template_html']
         );
 
         $text_body = str_replace(
-            ['{{first_name}}', '{{last_name}}', '{{email}}'],
-            [
-                $subscriber['first_name'] ?? '',
-                $subscriber['last_name'] ?? '',
-                $subscriber['email']
-            ],
+            array_keys($replacements),
+            array_values($replacements),
             $template['template_text']
         );
 
-        $subject = str_replace(
-            ['{{first_name}}', '{{last_name}}', '{{email}}'],
-            [
-                $subscriber['first_name'] ?? '',
-                $subscriber['last_name'] ?? '',
-                $subscriber['email']
-            ],
-            $template['template_subject']
+        // Use the campaign-specific subject, but also personalize it
+        $final_subject = str_replace(
+            array_keys($replacements),
+            array_values($replacements),
+            $campaign_subject
         );
 
         return $this->sendEmail(
             $subscriber['email'],
-            $subject,
+            $final_subject,
             $html_body,
             $text_body
         );
