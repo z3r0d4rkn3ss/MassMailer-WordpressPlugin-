@@ -1,10 +1,9 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Reporting Updates
+ * Mass Mailer Main Plugin File - API Integration Updates
  *
- * No direct changes are typically needed in this file for adding reporting,
- * as it primarily involves adding new methods to existing managers (like Tracker)
- * and creating new admin UI pages.
+ * This file integrates the new components for API for External Integration.
+ * It adds database table creation for API keys.
  *
  * @package Mass_Mailer
  */
@@ -36,8 +35,11 @@ require_once ABSPATH . '/includes/bounce-handler.php';
 require_once ABSPATH . '/includes/segment-manager.php';
 require_once ABSPATH . '/includes/ab-test-manager.php';
 
+// --- NEW: Include API Manager ---
+require_once ABSPATH . '/includes/api-manager.php';
 
-// --- Plugin Activation and Deactivation Hooks (Existing, no new tables for basic reporting) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for API Keys) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
@@ -50,6 +52,7 @@ function mass_mailer_activate() {
     $bounce_handler = new MassMailerBounceHandler();
     $segment_manager = new MassMailerSegmentManager();
     $ab_test_manager = new MassMailerABTestManager();
+    $api_manager = new MassMailerAPIManager(); // Instantiate to call create table method
 
 
     // SQL for existing tables (ensure they are idempotent with IF NOT EXISTS)
@@ -208,16 +211,29 @@ function mass_mailer_activate() {
         $settings_manager->createSettingsTable();
         $bounce_handler->createBouncesLogTable();
         $ab_test_manager->createABTestsTable();
+        // NEW: Create API keys table
+        $api_manager->createApiKeysTable();
 
         // Add foreign key for ab_test_id to mm_campaigns if it doesn't exist
-        $check_fk_sql = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" . MM_TABLE_PREFIX . "campaigns' AND COLUMN_NAME = 'ab_test_id' AND REFERENCED_TABLE_NAME = '" . MM_TABLE_PREFIX . "ab_tests';";
-        $fk_exists = $db->fetch($check_fk_sql);
+        $check_fk_campaigns_ab_test_sql = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" . MM_TABLE_PREFIX . "campaigns' AND COLUMN_NAME = 'ab_test_id' AND REFERENCED_TABLE_NAME = '" . MM_TABLE_PREFIX . "ab_tests';";
+        $fk_campaigns_ab_test_exists = $db->fetch($check_fk_campaigns_ab_test_sql);
 
-        if (!$fk_exists) {
-            $add_fk_sql = "ALTER TABLE `" . MM_TABLE_PREFIX . "campaigns` ADD CONSTRAINT `fk_campaigns_ab_test` FOREIGN KEY (`ab_test_id`) REFERENCES `" . MM_TABLE_PREFIX . "ab_tests`(`ab_test_id`) ON DELETE SET NULL;";
-            $db->query($add_fk_sql);
+        if (!$fk_campaigns_ab_test_exists) {
+            $add_fk_campaigns_ab_test_sql = "ALTER TABLE `" . MM_TABLE_PREFIX . "campaigns` ADD CONSTRAINT `fk_campaigns_ab_test` FOREIGN KEY (`ab_test_id`) REFERENCES `" . MM_TABLE_PREFIX . "ab_tests`(`ab_test_id`) ON DELETE SET NULL;";
+            $db->query($add_fk_campaigns_ab_test_sql);
             error_log('Mass Mailer: Added foreign key for ab_test_id to mm_campaigns.');
         }
+
+        // Add foreign key for user_id to mm_api_keys if it doesn't exist
+        $check_fk_api_keys_user_sql = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" . MM_TABLE_PREFIX . "api_keys' AND COLUMN_NAME = 'user_id' AND REFERENCED_TABLE_NAME = '" . MM_TABLE_PREFIX . "users';";
+        $fk_api_keys_user_exists = $db->fetch($check_fk_api_keys_user_sql);
+
+        if (!$fk_api_keys_user_exists) {
+            $add_fk_api_keys_user_sql = "ALTER TABLE `" . MM_TABLE_PREFIX . "api_keys` ADD CONSTRAINT `fk_api_keys_user` FOREIGN KEY (`user_id`) REFERENCES `" . MM_TABLE_PREFIX . "users`(`user_id`) ON DELETE SET NULL;";
+            $db->query($add_fk_api_keys_user_sql);
+            error_log('Mass Mailer: Added foreign key for user_id to mm_api_keys.');
+        }
+
 
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
