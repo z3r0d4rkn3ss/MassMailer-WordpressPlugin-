@@ -4,7 +4,7 @@
  *
  * This file serves as the main entry point for the Mass Mailer admin area.
  * It provides an overview and navigation links to other admin pages.
- * Now includes authentication check and a link to the Bounce Log.
+ * Now includes authentication check and a link to Manage Segments.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -65,6 +65,10 @@ $current_user = $auth->getCurrentUser();
             <div class="nav-item">
                 <a href="subscribers.php">Manage Subscribers</a>
                 <p>Add, edit, and view individual subscribers.</p>
+            </div>
+            <div class="nav-item">
+                <a href="segments.php">Manage Segments</a>
+                <p>Define dynamic groups of subscribers.</p>
             </div>
             <div class="nav-item">
                 <a href="templates.php">Manage Templates</a>
