@@ -1,10 +1,10 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Phase 5 Updates
+ * Mass Mailer Main Plugin File - Phase 7 Updates
  *
- * This file integrates the new components for Phase 5: Tracking & Analytics.
- * It adds database table creation for tracking and sets up routing for
- * tracking pixel and click redirect URLs.
+ * This file integrates the new components for Phase 7: Automation Engine.
+ * It adds database table creation for automations and sets up conceptual
+ * event hooks to trigger automation processing.
  *
  * IMPORTANT: This code snippet provides the *additions* and *modifications* to your existing
  * mass-mailer.php file. You will need to integrate these sections.
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
     die('Direct access not allowed.');
 }
 
-// --- Configuration and Core Includes (Existing from Phase 1, 2, 3, & 4) ---
+// --- Configuration and Core Includes (Existing from all previous phases) ---
 require_once dirname(__FILE__) . '/config.php';
 require_once dirname(__FILE__) . '/includes/db.php';
 require_once dirname(__FILE__) . '/includes/list-manager.php';
@@ -26,18 +26,20 @@ require_once dirname(__FILE__) . '/includes/template-manager.php';
 require_once dirname(__FILE__) . '/includes/mailer.php';
 require_once dirname(__FILE__) . '/includes/campaign-manager.php';
 require_once dirname(__FILE__) . '/includes/queue-manager.php';
-
-// --- NEW: Include Tracker Manager ---
 require_once dirname(__FILE__) . '/includes/tracker.php';
 
+// --- NEW: Include Automation Manager ---
+require_once dirname(__FILE__) . '/includes/automation-manager.php';
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Phase 5) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for Phase 7) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
     $campaign_manager = new MassMailerCampaignManager();
     $queue_manager = new MassMailerQueueManager();
-    $tracker = new MassMailerTracker(); // Instantiate to call create table method
+    $tracker = new MassMailerTracker();
+    $automation_manager = new MassMailerAutomationManager(); // Instantiate to call create table method
 
     // SQL to create tables (from your db-schema.sql) - Ensure these are idempotent (IF NOT EXISTS)
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
@@ -67,15 +69,72 @@ function mass_mailer_activate() {
         FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
+    $sql_campaigns = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "campaigns` (
+            `campaign_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `campaign_name` VARCHAR(255) NOT NULL UNIQUE,
+            `template_id` INT NOT NULL,
+            `list_id` INT NOT NULL,
+            `subject` VARCHAR(255) NOT NULL,
+            `status` ENUM('draft', 'scheduled', 'sending', 'sent', 'paused', 'cancelled') DEFAULT 'draft',
+            `send_at` DATETIME NULL,
+            `sent_count` INT DEFAULT 0,
+            `total_recipients` INT DEFAULT 0,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (`template_id`) REFERENCES " . MM_TABLE_PREFIX . "templates(`template_id`) ON DELETE CASCADE,
+            FOREIGN KEY (`list_id`) REFERENCES " . MM_TABLE_PREFIX . "lists(`list_id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+    $sql_queue = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "queue` (
+            `queue_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `campaign_id` INT NOT NULL,
+            `subscriber_id` INT NOT NULL,
+            `status` ENUM('pending', 'processing', 'sent', 'failed', 'skipped') DEFAULT 'pending',
+            `attempts` INT DEFAULT 0,
+            `last_attempt_at` TIMESTAMP NULL,
+            `error_message` TEXT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `sent_at` TIMESTAMP NULL,
+            UNIQUE KEY `campaign_subscriber_idx` (`campaign_id`, `subscriber_id`),
+            FOREIGN KEY (`campaign_id`) REFERENCES " . MM_TABLE_PREFIX . "campaigns(`campaign_id`) ON DELETE CASCADE,
+            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+    $sql_opens = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "opens` (
+            `open_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `campaign_id` INT NOT NULL,
+            `subscriber_id` INT NOT NULL,
+            `opened_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `ip_address` VARCHAR(45) NULL,
+            `user_agent` TEXT NULL,
+            UNIQUE KEY `campaign_subscriber_open_idx` (`campaign_id`, `subscriber_id`),
+            FOREIGN KEY (`campaign_id`) REFERENCES " . MM_TABLE_PREFIX . "campaigns(`campaign_id`) ON DELETE CASCADE,
+            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+    $sql_clicks = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "clicks` (
+            `click_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `campaign_id` INT NOT NULL,
+            `subscriber_id` INT NOT NULL,
+            `original_url` TEXT NOT NULL,
+            `clicked_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `ip_address` VARCHAR(45) NULL,
+            `user_agent` TEXT NULL,
+            FOREIGN KEY (`campaign_id`) REFERENCES " . MM_TABLE_PREFIX . "campaigns(`campaign_id`) ON DELETE CASCADE,
+            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+
     try {
         $db->query($sql_lists);
         $db->query($sql_subscribers);
         $db->query($sql_rel);
-        $template_manager->createTemplateTable();
-        $campaign_manager->createCampaignTable();
-        $queue_manager->createQueueTable();
-        // NEW: Create tracking tables
-        $tracker->createTrackingTables();
+        $template_manager->createTemplateTable(); // From Phase 2
+        $campaign_manager->createCampaignTable(); // From Phase 3
+        $queue_manager->createQueueTable();     // From Phase 4
+        $tracker->createTrackingTables();       // From Phase 5
+        // NEW: Create automations table
+        $automation_manager->createAutomationTable();
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -120,6 +179,8 @@ function mass_mailer_handle_form_submission() {
             $subscriber_manager = new MassMailerSubscriberManager();
             $list_manager = new MassMailerListManager();
 
+            // Attempt to add or update the subscriber
+            // Note: Status is 'pending' initially, but if added to a list, it might become 'subscribed'
             $subscriber_id = $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'pending');
 
             if ($subscriber_id) {
@@ -130,7 +191,17 @@ function mass_mailer_handle_form_submission() {
                         if ($added_to_list) {
                             $response['success'] = true;
                             $response['message'] = 'Thank you for subscribing!';
+                            // Update main subscriber status to 'subscribed' if added to at least one list
                             $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'subscribed');
+
+                            // NEW: Trigger automation for 'subscriber_added' event
+                            $automation_manager = new MassMailerAutomationManager();
+                            $automation_manager->processAutomations('subscriber_added', [
+                                'subscriber_id' => $subscriber_id,
+                                'list_id' => $list_id,
+                                'email' => $email
+                            ]);
+
                         } else {
                             $response['message'] = 'Subscription failed for the specified list. Please try again.';
                         }
@@ -169,20 +240,17 @@ function mass_mailer_process_queue_cron() {
 // }
 // add_action('mass_mailer_queue_cron_hook', 'mass_mailer_process_queue_cron');
 
-// For a standalone PHP application, you would set up a system-level cron job
-// to hit a specific PHP script that executes `mass_mailer_process_queue_cron()`.
-// Example cron entry (on your server):
-// * * * * * /usr/bin/php /path/to/your/mass-mailer/cron-worker.php > /dev/null 2>&1
 
-
-// --- NEW: Tracking Pixel and Click Redirect Endpoints ---
+// --- Tracking Pixel and Click Redirect Endpoints (Updated for Phase 5 & 7) ---
 /**
- * Handles tracking of email opens and clicks.
- * This function is designed to be hit directly by image requests (for opens)
- * or link clicks (for redirects).
+ * Handles tracking of email opens and clicks, and unsubscribe.
+ * Now also triggers automations based on these events.
  */
 function mass_mailer_handle_tracking() {
     $tracker = new MassMailerTracker();
+    $automation_manager = new MassMailerAutomationManager(); // NEW: Automation manager instance
+    $subscriber_manager = new MassMailerSubscriberManager(); // Ensure it's available for unsubscribe
+
     $campaign_id = isset($_GET['campaign_id']) ? intval($_GET['campaign_id']) : 0;
     $subscriber_id = isset($_GET['subscriber_id']) ? intval($_GET['subscriber_id']) : 0;
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
@@ -192,38 +260,49 @@ function mass_mailer_handle_tracking() {
         if (isset($_GET['action'])) {
             switch ($_GET['action']) {
                 case 'track_open':
-                    // Log the open
-                    $tracker->logOpen($campaign_id, $subscriber_id, $ip_address, $user_agent);
-                    // Serve a 1x1 transparent GIF
+                    $logged = $tracker->logOpen($campaign_id, $subscriber_id, $ip_address, $user_agent);
+                    if ($logged) {
+                        // NEW: Trigger automation for 'campaign_opened' event
+                        $automation_manager->processAutomations('campaign_opened', [
+                            'campaign_id' => $campaign_id,
+                            'subscriber_id' => $subscriber_id,
+                            'ip_address' => $ip_address,
+                            'user_agent' => $user_agent
+                        ]);
+                    }
                     header('Content-Type: image/gif');
-                    echo base64_decode('R0lGODlhAQABAJAAAP8AAAAAACH5BAUQAAAALAAAAAABAAEAAAICBAEAOw=='); // Transparent 1x1 GIF
+                    echo base64_decode('R0lGODlhAQABAJAAAP8AAAAAACH5BAUQAAAALAAAAAABAAEAAAICBAEAOw==');
                     exit;
                 case 'track_click':
                     $original_url_encoded = isset($_GET['url']) ? $_GET['url'] : '';
-                    $original_url = base66_decode(urldecode($original_url_encoded)); // Use base66_decode from mailer.php
+                    $original_url = base66_decode(urldecode($original_url_encoded));
 
                     if (!empty($original_url)) {
-                        $tracker->logClick($campaign_id, $subscriber_id, $original_url, $ip_address, $user_agent);
-                        // Redirect to the original URL
+                        $logged = $tracker->logClick($campaign_id, $subscriber_id, $original_url, $ip_address, $user_agent);
+                        if ($logged) {
+                            // NEW: Trigger automation for 'campaign_clicked' event
+                            $automation_manager->processAutomations('campaign_clicked', [
+                                'campaign_id' => $campaign_id,
+                                'subscriber_id' => $subscriber_id,
+                                'original_url' => $original_url,
+                                'ip_address' => $ip_address,
+                                'user_agent' => $user_agent
+                            ]);
+                        }
                         header('Location: ' . $original_url);
                         exit;
                     } else {
-                        // Handle invalid URL or missing parameters for click tracking
                         error_log('MassMailer: Invalid URL for click tracking. campaign_id: ' . $campaign_id . ', subscriber_id: ' . $subscriber_id);
-                        // Redirect to a default page or show an error
-                        header('Location: /'); // Redirect to homepage or error page
+                        header('Location: /');
                         exit;
                     }
                 case 'unsubscribe':
                     $email_to_unsubscribe = isset($_GET['email']) ? filter_var($_GET['email'], FILTER_SANITIZE_EMAIL) : '';
                     if (!empty($email_to_unsubscribe)) {
-                        $subscriber_manager = new MassMailerSubscriberManager();
-                        // Find subscriber by email and update status to 'unsubscribed'
+                        // Subscriber manager already included at top
                         $subscriber = $subscriber_manager->getSubscriber($email_to_unsubscribe);
                         if ($subscriber) {
                             $subscriber_manager->addOrUpdateSubscriber($email_to_unsubscribe, null, null, 'unsubscribed');
-                            // Optionally remove from all lists or specific list if parameter provided
-                            // For simplicity, we'll just update main status to unsubscribed.
                             echo "<h1>You have been successfully unsubscribed.</h1><p>You will no longer receive emails from us.</p>";
                             error_log('MassMailer: Subscriber ' . $email_to_unsubscribe . ' unsubscribed.');
                         } else {
