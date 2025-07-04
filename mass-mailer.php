@@ -1,9 +1,10 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - A/B Test Updates
+ * Mass Mailer Main Plugin File - Reporting Updates
  *
- * This file integrates the new components for A/B Testing.
- * It adds database table creation for A/B tests and updates the campaigns table.
+ * No direct changes are typically needed in this file for adding reporting,
+ * as it primarily involves adding new methods to existing managers (like Tracker)
+ * and creating new admin UI pages.
  *
  * @package Mass_Mailer
  */
@@ -32,12 +33,11 @@ require_once ABSPATH . '/includes/automation-manager.php';
 require_once ABSPATH . '/includes/auth.php';
 require_once ABSPATH . '/includes/settings-manager.php';
 require_once ABSPATH . '/includes/bounce-handler.php';
-
-// --- NEW: Include A/B Test Manager ---
+require_once ABSPATH . '/includes/segment-manager.php';
 require_once ABSPATH . '/includes/ab-test-manager.php';
 
 
-// --- Plugin Activation and Deactivation Hooks (Updated for A/B Tests) ---
+// --- Plugin Activation and Deactivation Hooks (Existing, no new tables for basic reporting) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
@@ -49,12 +49,10 @@ function mass_mailer_activate() {
     $settings_manager = new MassMailerSettingsManager();
     $bounce_handler = new MassMailerBounceHandler();
     $segment_manager = new MassMailerSegmentManager();
-    $ab_test_manager = new MassMailerABTestManager(); // Instantiate to call create table method
+    $ab_test_manager = new MassMailerABTestManager();
 
 
     // SQL for existing tables (ensure they are idempotent with IF NOT EXISTS)
-    // IMPORTANT: Note the changes in mm_campaigns table structure (ab_test_id, ab_test_variant)
-    // If you're updating an existing DB, you'll need ALTER TABLE statements.
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
         `list_id` INT AUTO_INCREMENT PRIMARY KEY,
         `list_name` VARCHAR(255) NOT NULL UNIQUE,
@@ -92,9 +90,8 @@ function mass_mailer_activate() {
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
-    // mm_campaigns table structure is now handled by CampaignManager->createCampaignTable()
+    // mm_campaigns table structure is handled by CampaignManager->createCampaignTable()
     // and will include ab_test_id and ab_test_variant.
-    // We will add the foreign key for ab_test_id here after ab_tests table is created.
 
     $sql_queue = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "queue` (
             `queue_id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -182,6 +179,20 @@ function mass_mailer_activate() {
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
+    $sql_ab_tests = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "ab_tests` (
+            `ab_test_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `test_name` VARCHAR(255) NOT NULL UNIQUE,
+            `test_type` ENUM('subject_line', 'content') NOT NULL,
+            `variant_campaign_ids` JSON NOT NULL,
+            `audience_split_percentage` INT DEFAULT 10,
+            `winner_criteria` ENUM('opens', 'clicks') DEFAULT 'clicks',
+            `status` ENUM('draft', 'running', 'completed', 'cancelled') DEFAULT 'draft',
+            `winner_campaign_id` INT NULL,
+            `remaining_audience_sent` BOOLEAN DEFAULT FALSE,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
 
     try {
         $db->query($sql_lists);
@@ -189,18 +200,16 @@ function mass_mailer_activate() {
         $db->query($sql_rel);
         $template_manager->createTemplateTable();
         $segment_manager->createSegmentsTable();
-        $campaign_manager->createCampaignTable(); // This now creates table with segment_id, ab_test_id, ab_test_variant
+        $campaign_manager->createCampaignTable();
         $queue_manager->createQueueTable();
         $tracker->createTrackingTables();
         $automation_manager->createAutomationTable();
         $auth->createUsersTable();
         $settings_manager->createSettingsTable();
         $bounce_handler->createBouncesLogTable();
-        // NEW: Create A/B tests table
         $ab_test_manager->createABTestsTable();
 
         // Add foreign key for ab_test_id to mm_campaigns if it doesn't exist
-        // This is done separately because ab_tests table must exist first.
         $check_fk_sql = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" . MM_TABLE_PREFIX . "campaigns' AND COLUMN_NAME = 'ab_test_id' AND REFERENCED_TABLE_NAME = '" . MM_TABLE_PREFIX . "ab_tests';";
         $fk_exists = $db->fetch($check_fk_sql);
 
@@ -328,26 +337,18 @@ function mass_mailer_process_bounces_cron() {
 // }
 // add_action('mass_mailer_bounces_cron_hook', 'mass_mailer_process_bounces_cron');
 
-// --- NEW: Cron Job for A/B Test Processing ---
-/**
- * Function to be triggered by a cron job to check and advance A/B tests.
- * This cron would typically run less frequently than the queue processing cron.
- */
+// --- Cron Job for A/B Test Processing (Existing from A/B Testing Phase) ---
 function mass_mailer_process_ab_tests_cron() {
     $ab_test_manager = new MassMailerABTestManager();
     $all_ab_tests = $ab_test_manager->getAllABTests();
 
     foreach ($all_ab_tests as $test) {
         if ($test['status'] === 'running') {
-            // Logic to determine if enough time/data has passed to determine a winner
-            // For simplicity, we'll just try to determine winner if test is running.
-            // In a real system, you might wait for a certain number of opens/clicks or a time period.
             $winner_id = $ab_test_manager->determineWinner($test['ab_test_id']);
             if ($winner_id) {
                 error_log('MassMailer: A/B Test ' . $test['ab_test_id'] . ' winner determined by cron: ' . $winner_id);
             }
         } elseif ($test['status'] === 'completed' && !$test['remaining_audience_sent'] && $test['winner_campaign_id']) {
-            // Send winner to remaining audience if test is completed and not yet sent
             $ab_test_manager->sendWinnerToRemainingAudience($test['ab_test_id']);
             error_log('MassMailer: A/B Test ' . $test['ab_test_id'] . ' winner sent to remaining audience by cron.');
         }
@@ -358,18 +359,6 @@ function mass_mailer_process_ab_tests_cron() {
 //     wp_schedule_event(time(), 'twicedaily', 'mass_mailer_ab_tests_cron_hook'); // Schedule twice daily
 // }
 // add_action('mass_mailer_ab_tests_cron_hook', 'mass_mailer_process_ab_tests_cron');
-
-// For a standalone PHP application, you would set up a separate system-level cron job
-// to hit a specific PHP script that executes `mass_mailer_process_ab_tests_cron()`.
-// Example cron entry (on your server):
-// 0 */12 * * * /usr/bin/php /path/to/your/mass-mailer/ab-test-worker.php > /dev/null 2>&1
-/*
-// ab-test-worker.php
-<?php
-require_once dirname(__FILE__) . '/mass-mailer.php'; // Load your main plugin file
-mass_mailer_process_ab_tests_cron();
-?>
-*/
 
 
 // --- Tracking Pixel and Click Redirect Endpoints (Existing from Phase 5 & 7) ---
