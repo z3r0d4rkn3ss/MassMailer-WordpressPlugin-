@@ -1,10 +1,9 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Bounce Handling Updates
+ * Mass Mailer Main Plugin File - Segment Updates
  *
- * This file integrates the new components for Bounce & Complaint Handling.
- * It adds database table creation for bounce logs and sets up a cron job
- * to process incoming bounce/FBL emails.
+ * This file integrates the new components for Advanced Segmentation.
+ * It adds database table creation for segments.
  *
  * @package Mass_Mailer
  */
@@ -32,12 +31,13 @@ require_once ABSPATH . '/includes/tracker.php';
 require_once ABSPATH . '/includes/automation-manager.php';
 require_once ABSPATH . '/includes/auth.php';
 require_once ABSPATH . '/includes/settings-manager.php';
-
-// --- NEW: Include Bounce Handler ---
 require_once ABSPATH . '/includes/bounce-handler.php';
 
+// --- NEW: Include Segment Manager ---
+require_once ABSPATH . '/includes/segment-manager.php';
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Bounce Handling) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for Segments) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
@@ -47,10 +47,14 @@ function mass_mailer_activate() {
     $automation_manager = new MassMailerAutomationManager();
     $auth = new MassMailerAuth();
     $settings_manager = new MassMailerSettingsManager();
-    $bounce_handler = new MassMailerBounceHandler(); // Instantiate to call create table method
+    $bounce_handler = new MassMailerBounceHandler();
+    $segment_manager = new MassMailerSegmentManager(); // Instantiate to call create table method
 
 
     // SQL for existing tables (ensure they are idempotent with IF NOT EXISTS)
+    // IMPORTANT: Note the change in mm_campaigns table structure (segment_id instead of list_id)
+    // If you're updating an existing DB, you'll need an ALTER TABLE statement for mm_campaigns.
+    // For a fresh install, the below will work.
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
         `list_id` INT AUTO_INCREMENT PRIMARY KEY,
         `list_name` VARCHAR(255) NOT NULL UNIQUE,
@@ -78,21 +82,18 @@ function mass_mailer_activate() {
         FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
-    $sql_campaigns = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "campaigns` (
-            `campaign_id` INT AUTO_INCREMENT PRIMARY KEY,
-            `campaign_name` VARCHAR(255) NOT NULL UNIQUE,
-            `template_id` INT NOT NULL,
-            `list_id` INT NOT NULL,
-            `subject` VARCHAR(255) NOT NULL,
-            `status` ENUM('draft', 'scheduled', 'sending', 'sent', 'paused', 'cancelled') DEFAULT 'draft',
-            `send_at` DATETIME NULL,
-            `sent_count` INT DEFAULT 0,
-            `total_recipients` INT DEFAULT 0,
+    $sql_templates = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "templates` (
+            `template_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `template_name` VARCHAR(255) NOT NULL UNIQUE,
+            `template_subject` VARCHAR(255) NOT NULL,
+            `template_html` LONGTEXT,
+            `template_text` LONGTEXT,
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (`template_id`) REFERENCES " . MM_TABLE_PREFIX . "templates(`template_id`) ON DELETE CASCADE,
-            FOREIGN KEY (`list_id`) REFERENCES " . MM_TABLE_PREFIX . "lists(`list_id`) ON DELETE CASCADE
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+    // NOTE: mm_campaigns table is now created by CampaignManager with segment_id FK
+    // The createCampaignTable() method in CampaignManager handles this.
 
     $sql_queue = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "queue` (
             `queue_id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -145,20 +146,48 @@ function mass_mailer_activate() {
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
+    $sql_users = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "users` (
+            `user_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `username` VARCHAR(100) NOT NULL UNIQUE,
+            `password_hash` VARCHAR(255) NOT NULL,
+            `role` ENUM('admin', 'editor') DEFAULT 'editor',
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+    $sql_settings = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "settings` (
+            `setting_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `setting_key` VARCHAR(100) NOT NULL UNIQUE,
+            `setting_value` TEXT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
+    $sql_bounces_log = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "bounces_log` (
+            `log_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `subscriber_id` INT NULL,
+            `email` VARCHAR(255) NOT NULL,
+            `bounce_type` ENUM('soft', 'hard', 'complaint') NOT NULL,
+            `reason` TEXT NULL,
+            `processed_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `raw_email_content` LONGTEXT NULL,
+            FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
 
     try {
         $db->query($sql_lists);
         $db->query($sql_subscribers);
         $db->query($sql_rel);
         $template_manager->createTemplateTable();
-        $campaign_manager->createCampaignTable();
+        $campaign_manager->createCampaignTable(); // This now creates table with segment_id FK
         $queue_manager->createQueueTable();
         $tracker->createTrackingTables();
         $automation_manager->createAutomationTable();
         $auth->createUsersTable();
         $settings_manager->createSettingsTable();
-        // NEW: Create bounces log table
         $bounce_handler->createBouncesLogTable();
+        // NEW: Create segments table
+        $segment_manager->createSegmentsTable();
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -173,7 +202,7 @@ function mass_mailer_deactivate() {
 // register_deactivation_hook(__FILE__, 'mass_mailer_deactivate'); // Example hook
 
 
-// --- Frontend Subscription Form Integration (Existing from Phase 1 & 7) ---
+// --- Frontend Subscription Form Integration (Existing from Phase 1) ---
 function mass_mailer_subscription_form($atts = []) {
     $atts = array_merge([
         'list_id' => null,
@@ -260,16 +289,8 @@ function mass_mailer_process_queue_cron() {
 // }
 // add_action('mass_mailer_queue_cron_hook', 'mass_mailer_process_queue_cron');
 
-// For a standalone PHP application, you would set up a system-level cron job
-// to hit a specific PHP script that executes `mass_mailer_process_queue_cron()`.
-// Example cron entry (on your server):
-// * * * * * /usr/bin/php /path/to/your/mass-mailer/cron-worker.php > /dev/null 2>&1
 
-
-// --- NEW: Cron Job for Bounce Processing ---
-/**
- * Function to be triggered by a cron job to process bounced emails via IMAP.
- */
+// --- Cron Job for Bounce Processing (Existing from Bounce Handling Phase) ---
 function mass_mailer_process_bounces_cron() {
     $settings_manager = new MassMailerSettingsManager();
     if ($settings_manager->getSetting('bounce_handling_enabled') === '1') {
@@ -284,18 +305,6 @@ function mass_mailer_process_bounces_cron() {
 //     wp_schedule_event(time(), 'daily', 'mass_mailer_bounces_cron_hook'); // Schedule daily
 // }
 // add_action('mass_mailer_bounces_cron_hook', 'mass_mailer_process_bounces_cron');
-
-// For a standalone PHP application, you would set up a separate system-level cron job
-// to hit a specific PHP script that executes `mass_mailer_process_bounces_cron()`.
-// Example cron entry (on your server):
-// 0 0 * * * /usr/bin/php /path/to/your/mass-mailer/bounce-worker.php > /dev/null 2>&1
-/*
-// bounce-worker.php
-<?php
-require_once dirname(__FILE__) . '/mass-mailer.php'; // Load your main plugin file
-mass_mailer_process_bounces_cron();
-?>
-*/
 
 
 // --- Tracking Pixel and Click Redirect Endpoints (Existing from Phase 5 & 7) ---
