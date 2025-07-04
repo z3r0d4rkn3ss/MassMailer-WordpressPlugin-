@@ -1,10 +1,10 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Phase 3 Updates
+ * Mass Mailer Main Plugin File - Phase 4 Updates
  *
- * This file integrates the new components for Phase 3: Campaign System.
+ * This file integrates the new components for Phase 4: Queue System & Send Throttling.
  *
- * IMPORTANT: This code snippet provides the *additions* to your existing
+ * IMPORTANT: This code snippet provides the *additions* and *modifications* to your existing
  * mass-mailer.php file. You will need to integrate these sections.
  *
  * @package Mass_Mailer
@@ -15,23 +15,25 @@ if (!defined('ABSPATH')) {
     die('Direct access not allowed.');
 }
 
-// --- Configuration and Core Includes (Existing from Phase 1 & 2) ---
+// --- Configuration and Core Includes (Existing from Phase 1, 2, & 3) ---
 require_once dirname(__FILE__) . '/config.php';
 require_once dirname(__FILE__) . '/includes/db.php';
 require_once dirname(__FILE__) . '/includes/list-manager.php';
 require_once dirname(__FILE__) . '/includes/subscriber-manager.php';
 require_once dirname(__FILE__) . '/includes/template-manager.php';
 require_once dirname(__FILE__) . '/includes/mailer.php';
-
-// --- NEW: Include Campaign Manager ---
 require_once dirname(__FILE__) . '/includes/campaign-manager.php';
 
+// --- NEW: Include Queue Manager ---
+require_once dirname(__FILE__) . '/includes/queue-manager.php';
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Phase 3) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for Phase 4) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
-    $campaign_manager = new MassMailerCampaignManager(); // Instantiate to call create table method
+    $campaign_manager = new MassMailerCampaignManager();
+    $queue_manager = new MassMailerQueueManager(); // Instantiate to call create table method
 
     // SQL to create tables (from your db-schema.sql) - Ensure these are idempotent (IF NOT EXISTS)
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
@@ -58,7 +60,7 @@ function mass_mailer_activate() {
         `joined_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`list_id`, `subscriber_id`),
         FOREIGN KEY (`list_id`) REFERENCES `" . MM_TABLE_PREFIX . "lists`(`list_id`) ON DELETE CASCADE,
-        FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX . "subscribers`(`subscriber_id`) ON DELETE CASCADE
+        FOREIGN KEY (`subscriber_id`) REFERENCES `" . MM_TABLE_PREFIX__ . "subscribers`(`subscriber_id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
     try {
@@ -66,8 +68,9 @@ function mass_mailer_activate() {
         $db->query($sql_subscribers);
         $db->query($sql_rel);
         $template_manager->createTemplateTable();
-        // NEW: Create campaigns table
-        $campaign_manager->createCampaignTable(); // Call method from campaign manager
+        $campaign_manager->createCampaignTable();
+        // NEW: Create queue table
+        $queue_manager->createQueueTable();
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -154,28 +157,33 @@ function mass_mailer_handle_form_submission() {
 //     mass_mailer_handle_form_submission();
 // }
 
-// --- Example of using the Mailer (for testing/demonstration) - Existing from Phase 2 ---
-/*
-function mass_mailer_test_email_send() {
-    $mailer = new MassMailerMailer();
-    $template_id = 1; // Replace with an actual template ID from your DB
-    $subscriber_id = 1; // Replace with an actual subscriber ID from your DB
-
-    $template_manager = new MassMailerTemplateManager();
-    $subscriber_manager = new MassMailerSubscriberManager();
-
-    if ($template_manager->getTemplate($template_id) && $subscriber_manager->getSubscriber($subscriber_id)) {
-        $sent = $mailer->sendTemplateEmailToSubscriber($template_id, $subscriber_id);
-        if ($sent) {
-            error_log('Test email sent successfully!');
-        } else {
-            error_log('Test email failed to send.');
-        }
-    } else {
-        error_log('Cannot send test email: Template or Subscriber not found.');
-    }
+// --- NEW: Cron Job / Queue Processing Trigger (Conceptual) ---
+/**
+ * Function to be triggered by a cron job or similar background process.
+ * It initiates the processing of the email queue.
+ */
+function mass_mailer_process_queue_cron() {
+    $queue_manager = new MassMailerQueueManager();
+    $queue_manager->processQueueBatch();
 }
-// mass_mailer_test_email_send();
+
+// Example of how you might schedule this in a WordPress environment:
+// if (!wp_next_scheduled('mass_mailer_queue_cron_hook')) {
+//     wp_schedule_event(time(), 'hourly', 'mass_mailer_queue_cron_hook'); // Schedule hourly
+// }
+// add_action('mass_mailer_queue_cron_hook', 'mass_mailer_process_queue_cron');
+
+// For a standalone PHP application, you would set up a system-level cron job
+// to hit a specific PHP script that executes `mass_mailer_process_queue_cron()`.
+// Example cron entry (on your server):
+// * * * * * /usr/bin/php /path/to/your/mass-mailer/cron-worker.php > /dev/null 2>&1
+// Where `cron-worker.php` would look like:
+/*
+<?php
+// cron-worker.php
+require_once dirname(__FILE__) . '/mass-mailer.php'; // Load your main plugin file
+mass_mailer_process_queue_cron();
+?>
 */
 
 ?>
