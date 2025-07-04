@@ -1,94 +1,108 @@
 <?php
 /**
- * Mass Mailer Admin Campaigns Page - Phase 4 Updates
+ * Mass Mailer Admin Campaigns Page - Segment Integration
  *
- * This file updates the campaign management UI to integrate with the queue system.
- * The "Send Now" action will now populate the queue.
+ * This file updates the campaign management UI to allow selecting a segment
+ * instead of a direct list for campaign targeting.
  *
  * @package Mass_Mailer
  * @subpackage Admin
  */
 
+// Start session and ensure authentication
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+require_once dirname(__FILE__) . '/../includes/auth.php';
+$auth = new MassMailerAuth();
+if (!$auth->isLoggedIn()) {
+    header('Location: login.php');
+    exit;
+}
+// Optional: Restrict access to 'admin' role or specific role for this page
+// if (!$auth->hasRole('editor')) {
+//     die('Access Denied. You do not have permission to view this page.');
+// }
+
 // Ensure core files are loaded
 if (!class_exists('MassMailerCampaignManager')) {
     require_once dirname(__FILE__) . '/../includes/campaign-manager.php';
-    require_once dirname(__FILE__) . '/../includes/list-manager.php';
-    require_once dirname(__FILE__) . '/../includes/template-manager.php';
-    // NEW: Include Queue Manager
+    require_once dirname(__FILE__) . '/../includes/list-manager.php'; // To fetch lists for dropdown (for automations, etc.)
+    require_once dirname(__FILE__) . '/../includes/template-manager.php'; // To fetch templates for dropdown
     require_once dirname(__FILE__) . '/../includes/queue-manager.php';
+    // NEW: Include Segment Manager
+    require_once dirname(__FILE__) . '/../includes/segment-manager.php';
 }
 
 $campaign_manager = new MassMailerCampaignManager();
-$list_manager = new MassMailerListManager();
+$list_manager = new MassMailerListManager(); // Still needed for list-based automations, etc.
 $template_manager = new MassMailerTemplateManager();
-$queue_manager = new MassMailerQueueManager(); // Instantiate Queue Manager
+$queue_manager = new MassMailerQueueManager();
+$segment_manager = new MassMailerSegmentManager(); // Instantiate Segment Manager
 
 $message = '';
 $message_type = ''; // 'success' or 'error'
 
-// Fetch all lists and templates for dropdowns
-$all_lists = $list_manager->getAllLists();
+// Fetch all lists, templates, and segments for dropdowns
+$all_lists = $list_manager->getAllLists(); // Still needed for context
 $all_templates = $template_manager->getAllTemplates();
+$all_segments = $segment_manager->getAllSegments(); // Fetch all segments
 
 // Handle form submissions for adding/updating/deleting campaigns
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
             case 'add_campaign':
-                $campaign_name = isset($_POST['campaign_name']) ? trim($_POST['campaign_name']) : '';
-                $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
-                $list_id = isset($_POST['list_id']) ? intval($_POST['list_id']) : 0;
-                $subject = isset($_POST['subject']) ? trim($_POST['subject']) : '';
-                $send_at = isset($_POST['send_at']) && !empty($_POST['send_at']) ? $_POST['send_at'] : null;
-
-                if (!empty($campaign_name) && $template_id > 0 && $list_id > 0 && !empty($subject)) {
-                    $new_campaign_id = $campaign_manager->createCampaign($campaign_name, $template_id, $list_id, $subject, $send_at);
-                    if ($new_campaign_id) {
-                        // Populate queue immediately if not scheduled for future
-                        if (!$send_at || strtotime($send_at) <= time()) {
-                            $added_to_queue_count = $queue_manager->populateQueueFromCampaign($new_campaign_id);
-                            if ($added_to_queue_count !== false) {
-                                $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created and ' . $added_to_queue_count . ' emails added to queue!';
-                                $message_type = 'success';
-                                // Update campaign status to 'sending' if immediately sent
-                                $campaign_manager->updateCampaignStatus($new_campaign_id, 'sending');
-                            } else {
-                                $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created, but failed to add emails to queue.';
-                                $message_type = 'error';
-                            }
-                        } else {
-                            $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created and scheduled for ' . htmlspecialchars($send_at) . '!';
-                            $message_type = 'success';
-                        }
-                    } else {
-                        $message = 'Failed to create campaign. A campaign with this name might already exist or invalid IDs.';
-                        $message_type = 'error';
-                    }
-                } else {
-                    $message = 'Campaign name, template, list, and subject cannot be empty.';
-                    $message_type = 'error';
-                }
-                break;
-
             case 'update_campaign':
                 $campaign_id = isset($_POST['campaign_id']) ? intval($_POST['campaign_id']) : 0;
                 $campaign_name = isset($_POST['campaign_name']) ? trim($_POST['campaign_name']) : '';
                 $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
-                $list_id = isset($_POST['list_id']) ? intval($_POST['list_id']) : 0;
+                $segment_id = isset($_POST['segment_id']) ? intval($_POST['segment_id']) : 0; // Use segment_id
                 $subject = isset($_POST['subject']) ? trim($_POST['subject']) : '';
-                $status = isset($_POST['status']) ? trim($_POST['status']) : 'draft';
                 $send_at = isset($_POST['send_at']) && !empty($_POST['send_at']) ? $_POST['send_at'] : null;
+                $status = isset($_POST['status']) ? trim($_POST['status']) : 'draft';
 
-                if ($campaign_id > 0 && !empty($campaign_name) && $template_id > 0 && $list_id > 0 && !empty($subject) && !empty($status)) {
-                    if ($campaign_manager->updateCampaign($campaign_id, $campaign_name, $template_id, $list_id, $subject, $status, $send_at)) {
-                        $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" updated successfully!';
-                        $message_type = 'success';
-                    } else {
-                        $message = 'Failed to update campaign. Check if the ID is valid or if the name is already taken.';
-                        $message_type = 'error';
+                if (!empty($campaign_name) && $template_id > 0 && $segment_id > 0 && !empty($subject)) {
+                    if ($_POST['action'] === 'add_campaign') {
+                        // Pass segment_id instead of list_id
+                        $new_campaign_id = $campaign_manager->createCampaign($campaign_name, $template_id, $segment_id, $subject, $send_at);
+                        if ($new_campaign_id) {
+                            // Populate queue immediately if not scheduled for future
+                            if (!$send_at || strtotime($send_at) <= time()) {
+                                $added_to_queue_count = $queue_manager->populateQueueFromCampaign($new_campaign_id);
+                                if ($added_to_queue_count !== false) {
+                                    $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created and ' . $added_to_queue_count . ' emails added to queue!';
+                                    $message_type = 'success';
+                                    $campaign_manager->updateCampaignStatus($new_campaign_id, 'sending');
+                                } else {
+                                    $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created, but failed to add emails to queue.';
+                                    $message_type = 'error';
+                                }
+                            } else {
+                                $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" created and scheduled for ' . htmlspecialchars($send_at) . '!';
+                                $message_type = 'success';
+                            }
+                        } else {
+                            $message = 'Failed to create campaign. A campaign with this name might already exist or invalid IDs.';
+                            $message_type = 'error';
+                        }
+                    } else { // update_campaign
+                        if ($campaign_id > 0) {
+                            // Pass segment_id instead of list_id
+                            if ($campaign_manager->updateCampaign($campaign_id, $campaign_name, $template_id, $segment_id, $subject, $status, $send_at)) {
+                                $message = 'Campaign "' . htmlspecialchars($campaign_name) . '" updated successfully!';
+                                $message_type = 'success';
+                            } else {
+                                $message = 'Failed to update campaign. Check if the ID is valid or if the name is already taken.';
+                                $message_type = 'error';
+                            }
+                        } else {
+                            $message = 'Invalid campaign ID for update.';
+                            $message_type = 'error';
+                        }
                     }
                 } else {
-                    $message = 'Invalid campaign ID, name, template, list, subject, or status for update.';
+                    $message = 'Campaign name, template, segment, and subject cannot be empty.';
                     $message_type = 'error';
                 }
                 break;
@@ -113,7 +127,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($campaign_id > 0) {
                     $campaign = $campaign_manager->getCampaign($campaign_id);
                     if ($campaign && ($campaign['status'] === 'draft' || $campaign['status'] === 'paused' || $campaign['status'] === 'scheduled')) {
-                        // Mark campaign as sending and populate queue
                         if ($campaign_manager->updateCampaignStatus($campaign_id, 'sending')) {
                             $added_to_queue_count = $queue_manager->populateQueueFromCampaign($campaign_id);
                             if ($added_to_queue_count !== false) {
@@ -122,8 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             } else {
                                 $message = 'Campaign "' . htmlspecialchars($campaign['campaign_name']) . '" marked for sending, but failed to add emails to queue.';
                                 $message_type = 'error';
-                                // Revert status if queue population failed
-                                $campaign_manager->updateCampaignStatus($campaign_id, 'paused');
+                                $campaign_manager->updateCampaignStatus($campaign_id, 'paused'); // Revert status if queue population failed
                             }
                         } else {
                             $message = 'Failed to update campaign status to "sending".';
@@ -214,12 +226,12 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                 </select>
             </div>
             <div class="form-group">
-                <label for="list_id">Target List:</label>
-                <select id="list_id" name="list_id" required>
-                    <option value="">Select a List</option>
-                    <?php foreach ($all_lists as $list): ?>
-                        <option value="<?php echo htmlspecialchars($list['list_id']); ?>">
-                            <?php echo htmlspecialchars($list['list_name']); ?>
+                <label for="segment_id">Target Segment:</label>
+                <select id="segment_id" name="segment_id" required>
+                    <option value="">Select a Segment</option>
+                    <?php foreach ($all_segments as $segment): ?>
+                        <option value="<?php echo htmlspecialchars($segment['segment_id']); ?>">
+                            <?php echo htmlspecialchars($segment['segment_name']); ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -245,7 +257,7 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                         <th>ID</th>
                         <th>Name</th>
                         <th>Template</th>
-                        <th>List</th>
+                        <th>Segment</th>
                         <th>Subject</th>
                         <th>Status</th>
                         <th>Sent/Total</th>
@@ -259,7 +271,12 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                             <td><?php echo htmlspecialchars($campaign['campaign_id']); ?></td>
                             <td><?php echo htmlspecialchars($campaign['campaign_name']); ?></td>
                             <td><?php echo htmlspecialchars($campaign['template_name']); ?></td>
-                            <td><?php echo htmlspecialchars($campaign['list_name']); ?></td>
+                            <td>
+                                <?php
+                                $segment_info = $segment_manager->getSegment($campaign['segment_id']);
+                                echo htmlspecialchars($segment_info['segment_name'] ?? 'N/A');
+                                ?>
+                            </td>
                             <td><?php echo htmlspecialchars($campaign['subject']); ?></td>
                             <td><span class="status-<?php echo htmlspecialchars($campaign['status']); ?>"><?php echo htmlspecialchars(ucfirst($campaign['status'])); ?></span></td>
                             <td><?php echo htmlspecialchars($campaign['sent_count']) . '/' . htmlspecialchars($campaign['total_recipients']); ?></td>
@@ -269,7 +286,7 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                                     <?php echo $campaign['campaign_id']; ?>,
                                     '<?php echo addslashes(htmlspecialchars($campaign['campaign_name'])); ?>',
                                     <?php echo htmlspecialchars($campaign['template_id']); ?>,
-                                    <?php echo htmlspecialchars($campaign['list_id']); ?>,
+                                    <?php echo htmlspecialchars($campaign['segment_id']); ?>,
                                     '<?php echo addslashes(htmlspecialchars($campaign['subject'])); ?>',
                                     '<?php echo addslashes(htmlspecialchars($campaign['status'])); ?>',
                                     '<?php echo $campaign['send_at'] ? date('Y-m-d\TH:i', strtotime($campaign['send_at'])) : ''; ?>'
@@ -284,7 +301,7 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                                 <?php
                                 $can_send = in_array($campaign['status'], ['draft', 'paused', 'scheduled']);
                                 if ($can_send): ?>
-                                <form method="POST" action="" style="display:inline-block;" onsubmit="return confirm('Are you sure you want to send this campaign now? This will add all list subscribers to the queue.');">
+                                <form method="POST" action="" style="display:inline-block;" onsubmit="return confirm('Are you sure you want to send this campaign now? This will add all segment subscribers to the queue.');">
                                     <input type="hidden" name="action" value="send_now">
                                     <input type="hidden" name="campaign_id" value="<?php echo htmlspecialchars($campaign['campaign_id']); ?>">
                                     <button type="submit" class="send-now">Send Now</button>
@@ -319,12 +336,12 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="edit_list_id">Target List:</label>
-                            <select id="edit_list_id" name="list_id" required>
-                                <option value="">Select a List</option>
-                                <?php foreach ($all_lists as $list): ?>
-                                    <option value="<?php echo htmlspecialchars($list['list_id']); ?>">
-                                        <?php echo htmlspecialchars($list['list_name']); ?>
+                            <label for="edit_segment_id">Target Segment:</label>
+                            <select id="edit_segment_id" name="segment_id" required>
+                                <option value="">Select a Segment</option>
+                                <?php foreach ($all_segments as $segment): ?>
+                                    <option value="<?php echo htmlspecialchars($segment['segment_id']); ?>">
+                                        <?php echo htmlspecialchars($segment['segment_name']); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -355,11 +372,11 @@ $all_campaigns = $campaign_manager->getAllCampaigns();
             </div>
 
             <script>
-                function showEditForm(id, name, templateId, listId, subject, status, sendAt) {
+                function showEditForm(id, name, templateId, segmentId, subject, status, sendAt) {
                     document.getElementById('edit_campaign_id').value = id;
                     document.getElementById('edit_campaign_name').value = name;
                     document.getElementById('edit_template_id').value = templateId;
-                    document.getElementById('edit_list_id').value = listId;
+                    document.getElementById('edit_segment_id').value = segmentId;
                     document.getElementById('edit_subject').value = subject;
                     document.getElementById('edit_status').value = status;
                     document.getElementById('edit_send_at').value = sendAt; // datetime-local needs YYYY-MM-DDTHH:MM format
