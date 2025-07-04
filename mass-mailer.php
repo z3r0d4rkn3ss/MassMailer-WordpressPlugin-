@@ -1,8 +1,8 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Phase 2 Updates
+ * Mass Mailer Main Plugin File - Phase 3 Updates
  *
- * This file integrates the new components for Phase 2: Email Core.
+ * This file integrates the new components for Phase 3: Campaign System.
  *
  * IMPORTANT: This code snippet provides the *additions* to your existing
  * mass-mailer.php file. You will need to integrate these sections.
@@ -15,21 +15,23 @@ if (!defined('ABSPATH')) {
     die('Direct access not allowed.');
 }
 
-// --- Configuration and Core Includes (Existing from Phase 1) ---
+// --- Configuration and Core Includes (Existing from Phase 1 & 2) ---
 require_once dirname(__FILE__) . '/config.php';
 require_once dirname(__FILE__) . '/includes/db.php';
 require_once dirname(__FILE__) . '/includes/list-manager.php';
 require_once dirname(__FILE__) . '/includes/subscriber-manager.php';
-
-// --- NEW: Include Template Manager and Mailer ---
 require_once dirname(__FILE__) . '/includes/template-manager.php';
 require_once dirname(__FILE__) . '/includes/mailer.php';
 
+// --- NEW: Include Campaign Manager ---
+require_once dirname(__FILE__) . '/includes/campaign-manager.php';
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Phase 2) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for Phase 3) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
-    $template_manager = new MassMailerTemplateManager(); // Instantiate to call create table method
+    $template_manager = new MassMailerTemplateManager();
+    $campaign_manager = new MassMailerCampaignManager(); // Instantiate to call create table method
 
     // SQL to create tables (from your db-schema.sql) - Ensure these are idempotent (IF NOT EXISTS)
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
@@ -63,8 +65,9 @@ function mass_mailer_activate() {
         $db->query($sql_lists);
         $db->query($sql_subscribers);
         $db->query($sql_rel);
-        // NEW: Create templates table
-        $template_manager->createTemplateTable(); // Call method from template manager
+        $template_manager->createTemplateTable();
+        // NEW: Create campaigns table
+        $campaign_manager->createCampaignTable(); // Call method from campaign manager
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -151,16 +154,13 @@ function mass_mailer_handle_form_submission() {
 //     mass_mailer_handle_form_submission();
 // }
 
-// --- NEW: Example of using the Mailer (for testing/demonstration) ---
+// --- Example of using the Mailer (for testing/demonstration) - Existing from Phase 2 ---
 /*
-// This would typically be triggered by a campaign sending process, not directly on page load.
-// For testing purposes, you could uncomment this and adjust.
 function mass_mailer_test_email_send() {
     $mailer = new MassMailerMailer();
     $template_id = 1; // Replace with an actual template ID from your DB
     $subscriber_id = 1; // Replace with an actual subscriber ID from your DB
 
-    // Ensure template and subscriber exist for testing
     $template_manager = new MassMailerTemplateManager();
     $subscriber_manager = new MassMailerSubscriberManager();
 
@@ -175,7 +175,6 @@ function mass_mailer_test_email_send() {
         error_log('Cannot send test email: Template or Subscriber not found.');
     }
 }
-// Call this function when appropriate, e.g., via an admin action or cron job.
 // mass_mailer_test_email_send();
 */
 
