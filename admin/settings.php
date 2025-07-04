@@ -1,9 +1,8 @@
 <?php
 /**
- * Mass Mailer Admin Settings Page
+ * Mass Mailer Admin Settings Page - Bounce Settings Update
  *
- * This file provides the user interface for configuring global settings
- * for the Mass Mailer plugin.
+ * This file updates the settings UI to include configuration for bounce and complaint handling.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -48,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         if ($settings_manager->setSetting('reply_to_email', trim($_POST['reply_to_email']))) $updated_count++;
     }
 
-    // SMTP Settings
+    // Mailer Settings
     if (isset($_POST['mailer_type'])) {
         if ($settings_manager->setSetting('mailer_type', trim($_POST['mailer_type']))) $updated_count++;
     }
@@ -74,6 +73,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     // Tracking Settings
     if (isset($_POST['tracking_base_url'])) {
         if ($settings_manager->setSetting('tracking_base_url', trim($_POST['tracking_base_url']))) $updated_count++;
+    }
+
+    // NEW: Bounce Handling Settings
+    if (isset($_POST['bounce_handling_enabled'])) {
+        if ($settings_manager->setSetting('bounce_handling_enabled', $_POST['bounce_handling_enabled'] === '1' ? '1' : '0')) $updated_count++;
+    }
+    if (isset($_POST['bounce_imap_host'])) {
+        if ($settings_manager->setSetting('bounce_imap_host', trim($_POST['bounce_imap_host']))) $updated_count++;
+    }
+    if (isset($_POST['bounce_imap_port'])) {
+        if ($settings_manager->setSetting('bounce_imap_port', intval($_POST['bounce_imap_port']))) $updated_count++;
+    }
+    if (isset($_POST['bounce_imap_username'])) {
+        if ($settings_manager->setSetting('bounce_imap_username', trim($_POST['bounce_imap_username']))) $updated_count++;
+    }
+    if (isset($_POST['bounce_imap_password'])) {
+        if (!empty($_POST['bounce_imap_password'])) {
+            if ($settings_manager->setSetting('bounce_imap_password', $_POST['bounce_imap_password'])) $updated_count++;
+        }
+    }
+    if (isset($_POST['bounce_imap_flags'])) {
+        if ($settings_manager->setSetting('bounce_imap_flags', trim($_POST['bounce_imap_flags']))) $updated_count++;
     }
 
 
@@ -102,6 +123,14 @@ $smtp_password = ''; // Never pre-fill password fields for security
 $smtp_encryption = $current_settings['smtp_encryption'] ?? 'tls';
 
 $tracking_base_url = $current_settings['tracking_base_url'] ?? 'http://localhost/mass-mailer/mass-mailer.php'; // Default fallback
+
+// NEW: Bounce Handling Defaults
+$bounce_handling_enabled = $current_settings['bounce_handling_enabled'] ?? '0';
+$bounce_imap_host = $current_settings['bounce_imap_host'] ?? '';
+$bounce_imap_port = $current_settings['bounce_imap_port'] ?? 993;
+$bounce_imap_username = $current_settings['bounce_imap_username'] ?? '';
+$bounce_imap_password = ''; // Never pre-fill password fields for security
+$bounce_imap_flags = $current_settings['bounce_imap_flags'] ?? '/imap/ssl/novalidate-cert';
 
 ?>
 <!DOCTYPE html>
@@ -216,6 +245,45 @@ $tracking_base_url = $current_settings['tracking_base_url'] ?? 'http://localhost
                 </div>
             </section>
 
+            <section>
+                <h2>Bounce & Complaint Handling</h2>
+                <div class="form-group">
+                    <label for="bounce_handling_enabled">Enable Bounce Handling:</label>
+                    <select id="bounce_handling_enabled" name="bounce_handling_enabled" onchange="toggleBounceSettings(this.value)">
+                        <option value="0" <?php echo ($bounce_handling_enabled === '0') ? 'selected' : ''; ?>>No</option>
+                        <option value="1" <?php echo ($bounce_handling_enabled === '1') ? 'selected' : ''; ?>>Yes</option>
+                    </select>
+                    <p class="info-text">Enables automatic processing of bounced emails and spam complaints.</p>
+                </div>
+                <div id="bounce_settings_fields" style="<?php echo ($bounce_handling_enabled === '1') ? 'display:block;' : 'display:none;'; ?>">
+                    <p class="info-text">Configure IMAP access to a dedicated mailbox where bounces/FBLs are sent.</p>
+                    <div class="form-group">
+                        <label for="bounce_imap_host">IMAP Host:</label>
+                        <input type="text" id="bounce_imap_host" name="bounce_imap_host" value="<?php echo htmlspecialchars($bounce_imap_host); ?>">
+                        <p class="info-text">e.g., imap.yourmail.com</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="bounce_imap_port">IMAP Port:</label>
+                        <input type="number" id="bounce_imap_port" name="bounce_imap_port" value="<?php echo htmlspecialchars($bounce_imap_port); ?>">
+                        <p class="info-text">Common ports: 993 (IMAPS), 143 (IMAP)</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="bounce_imap_username">IMAP Username:</label>
+                        <input type="text" id="bounce_imap_username" name="bounce_imap_username" value="<?php echo htmlspecialchars($bounce_imap_username); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="bounce_imap_password">IMAP Password:</label>
+                        <input type="password" id="bounce_imap_password" name="bounce_imap_password" placeholder="Leave blank to keep current password">
+                        <p class="info-text">Only enter if you want to change the password.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="bounce_imap_flags">IMAP Flags:</label>
+                        <input type="text" id="bounce_imap_flags" name="bounce_imap_flags" value="<?php echo htmlspecialchars($bounce_imap_flags); ?>">
+                        <p class="info-text">e.g., <code>/imap/ssl/novalidate-cert</code> or <code>/pop3/ssl</code>. Consult your mail provider.</p>
+                    </div>
+                </div>
+            </section>
+
             <button type="submit" name="save_settings">Save Settings</button>
         </form>
     </div>
@@ -224,6 +292,8 @@ $tracking_base_url = $current_settings['tracking_base_url'] ?? 'http://localhost
         document.addEventListener('DOMContentLoaded', function() {
             const mailerTypeSelect = document.getElementById('mailer_type');
             const smtpSettingsDiv = document.getElementById('smtp_settings');
+            const bounceHandlingEnabledSelect = document.getElementById('bounce_handling_enabled');
+            const bounceSettingsFieldsDiv = document.getElementById('bounce_settings_fields');
 
             function toggleSmtpSettings() {
                 if (mailerTypeSelect.value === 'smtp') {
@@ -233,10 +303,21 @@ $tracking_base_url = $current_settings['tracking_base_url'] ?? 'http://localhost
                 }
             }
 
-            mailerTypeSelect.addEventListener('change', toggleSmtpSettings);
+            function toggleBounceSettings(value) {
+                if (value === '1') {
+                    bounceSettingsFieldsDiv.style.display = 'block';
+                } else {
+                    bounceSettingsFieldsDiv.style.display = 'none';
+                }
+            }
 
-            // Initial call to set correct display on page load
+            mailerTypeSelect.addEventListener('change', toggleSmtpSettings);
+            bounceHandlingEnabledSelect.addEventListener('change', () => toggleBounceSettings(bounceHandlingEnabledSelect.value));
+
+
+            // Initial calls to set correct display on page load
             toggleSmtpSettings();
+            toggleBounceSettings(bounceHandlingEnabledSelect.value);
         });
     </script>
 </body>
