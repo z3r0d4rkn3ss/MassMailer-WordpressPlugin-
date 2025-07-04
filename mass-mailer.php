@@ -17,30 +17,36 @@ if (session_status() == PHP_SESSION_NONE) {
 // Ensure no direct access to the file
 // This check is standard for WordPress plugin files
 if (!defined('ABSPATH')) {
-    define('ABSPATH', dirname(__FILE__) . '/'); // Define ABSPATH for standalone use if not WordPress
+    // If ABSPATH is not defined, it means WordPress is not loaded.
     // In a real WordPress plugin, this file should always be loaded via WP.
-    // die('This plugin file cannot be accessed directly.');
+    die('This plugin file cannot be accessed directly.');
+}
+
+// Define a constant for the plugin's base directory
+// This ensures correct pathing for all internal includes within the plugin.
+if (!defined('MASS_MAILER_PLUGIN_DIR')) {
+    define('MASS_MAILER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 }
 
 // --- Configuration and Core Includes ---
 // config.php is no longer needed as db.php now uses WordPress's global settings
 // require_once ABSPATH . '/config.php'; // REMOVED: No longer needed with WordPress DB integration
 
-require_once ABSPATH . '/includes/db.php';
-require_once ABSPATH . '/includes/list-manager.php';
-require_once ABSPATH . '/includes/subscriber-manager.php';
-require_once ABSPATH . '/includes/template-manager.php';
-require_once ABSPATH . '/includes/mailer.php';
-require_once ABSPATH . '/includes/campaign-manager.php';
-require_once ABSPATH . '/includes/queue-manager.php';
-require_once ABSPATH . '/includes/tracker.php';
-require_once ABSPATH . '/includes/automation-manager.php';
-require_once ABSPATH . '/includes/auth.php';
-require_once ABSPATH . '/includes/settings-manager.php';
-require_once ABSPATH . '/includes/bounce-handler.php';
-require_once ABSPATH . '/includes/segment-manager.php';
-require_once ABSPATH . '/includes/ab-test-manager.php';
-require_once ABSPATH . '/includes/api-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/db.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/list-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/subscriber-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/template-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/mailer.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/campaign-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/queue-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/tracker.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/automation-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/auth.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/settings-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/bounce-handler.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/segment-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/ab-test-manager.php';
+require_once MASS_MAILER_PLUGIN_DIR . 'includes/api-manager.php';
 
 
 /**
@@ -93,9 +99,8 @@ function mass_mailer_activate() {
     }
     if (!$settings_manager->getSetting('tracking_base_url')) {
         // Attempt to guess base URL, or set a placeholder
-        $current_url = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]";
-        // Adjust to point to the root of your mass-mailer directory
-        $base_url = str_replace('/mass-mailer.php', '', $current_url);
+        // Use plugins_url() for a more robust way to get the plugin's URL
+        $base_url = plugins_url('/', __FILE__);
         $settings_manager->setSetting('tracking_base_url', $base_url);
     }
     if (!$settings_manager->getSetting('mailer_type')) {
@@ -151,7 +156,7 @@ function mass_mailer_handle_form_submission() {
     $response = ['success' => false, 'message' => 'An unknown error occurred.'];
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        require_once ABSPATH . 'includes/subscriber-manager.php';
+        require_once MASS_MAILER_PLUGIN_DIR . 'includes/subscriber-manager.php';
         $subscriber_manager = new MassMailerSubscriberManager();
 
         $email = filter_input(INPUT_POST, 'email', FILTER_SANITIZE_EMAIL);
@@ -204,8 +209,8 @@ add_action('wp_ajax_nopriv_mass_mailer_subscribe', 'mass_mailer_handle_form_subm
  * This function is called directly via GET parameters in email links.
  */
 function mass_mailer_handle_tracking() {
-    require_once ABSPATH . 'includes/tracker.php';
-    require_once ABSPATH . 'includes/subscriber-manager.php';
+    require_once MASS_MAILER_PLUGIN_DIR . 'includes/tracker.php';
+    require_once MASS_MAILER_PLUGIN_DIR . 'includes/subscriber-manager.php';
     $tracker = new MassMailerTracker();
     $subscriber_manager = new MassMailerSubscriberManager();
 
@@ -261,7 +266,7 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['track_open', 'track_cl
 
 // Routing for email verification endpoint
 if (isset($_GET['action']) && $_GET['action'] === 'verify_email') {
-    require_once ABSPATH . '/verify.php';
+    require_once MASS_MAILER_PLUGIN_DIR . 'verify.php';
     exit; // Stop further execution after handling verification
 }
 
@@ -287,7 +292,7 @@ function mass_mailer_subscription_form_shortcode($atts) {
     // Start output buffering to capture HTML
     ob_start();
     // Include the form builder view file
-    require ABSPATH . 'views/form-builder.php';
+    require MASS_MAILER_PLUGIN_DIR . 'views/form-builder.php';
     return ob_get_clean();
 }
 add_shortcode('mass_mailer_form', 'mass_mailer_subscription_form_shortcode');
@@ -298,7 +303,7 @@ add_shortcode('mass_mailer_form', 'mass_mailer_subscription_form_shortcode');
  * This should be scheduled via WordPress cron or system cron.
  */
 function mass_mailer_process_queue_cron_wp() {
-    require_once ABSPATH . 'includes/queue-manager.php';
+    require_once MASS_MAILER_PLUGIN_DIR . 'includes/queue-manager.php';
     $queue_manager = new MassMailerQueueManager();
     $queue_manager->processQueueBatch();
     error_log('MassMailer: Queue processing cron job executed.');
@@ -314,7 +319,7 @@ if (!wp_next_scheduled('mass_mailer_daily_cron_hook')) {
  * This should be scheduled via WordPress cron or system cron.
  */
 function mass_mailer_process_ab_tests_cron_wp() {
-    require_once ABSPATH . 'includes/ab-test-manager.php';
+    require_once MASS_MAILER_PLUGIN_DIR . 'includes/ab-test-manager.php';
     $ab_test_manager = new MassMailerABTestManager();
     $ab_test_manager->processPendingABTests();
     error_log('MassMailer: A/B test processing cron job executed.');
@@ -327,8 +332,8 @@ add_action('mass_mailer_daily_cron_hook', 'mass_mailer_process_ab_tests_cron_wp'
  * This should be scheduled via WordPress cron or system cron.
  */
 function mass_mailer_process_bounces_cron_wp() {
-    require_once ABSPATH . 'includes/bounce-handler.php';
-    require_once ABSPATH . 'includes/settings-manager.php'; // Required to check if bounce handling is enabled
+    require_once MASS_MAILER_PLUGIN_DIR . 'includes/bounce-handler.php';
+    require_once MASS_MAILER_PLUGIN_DIR . 'includes/settings-manager.php'; // Required to check if bounce handling is enabled
     $settings_manager = new MassMailerSettingsManager();
     if ($settings_manager->getSetting('bounce_handling_enabled') === '1') {
         $bounce_handler = new MassMailerBounceHandler();
@@ -460,19 +465,19 @@ function mass_mailer_admin_menu() {
 add_action('admin_menu', 'mass_mailer_admin_menu');
 
 // Admin page callbacks - these functions will include the respective admin files
-function mass_mailer_dashboard_page() { include ABSPATH . 'admin/dashboard.php'; }
-function mass_mailer_lists_page() { include ABSPATH . 'admin/lists.php'; }
-function mass_mailer_subscribers_page() { include ABSPATH . 'admin/subscribers.php'; }
-function mass_mailer_segments_page() { include ABSPATH . 'admin/segments.php'; }
-function mass_mailer_templates_page() { include ABSPATH . 'admin/templates.php'; }
-function mass_mailer_campaigns_page() { include ABSPATH . 'admin/campaigns.php'; }
-function mass_mailer_ab_tests_page() { include ABSPATH . 'admin/ab-tests.php'; }
-function mass_mailer_automations_page() { include ABSPATH . 'admin/automations.php'; }
-function mass_mailer_reports_page() { include ABSPATH . 'admin/reports.php'; }
-function mass_mailer_analytics_page() { include ABSPATH . 'admin/analytics.php'; }
-function mass_mailer_bounces_page() { include ABSPATH . 'admin/bounces.php'; }
-function mass_mailer_privacy_page() { include ABSPATH . 'admin/privacy.php'; }
-function mass_mailer_settings_page() { include ABSPATH . 'admin/settings.php'; }
+function mass_mailer_dashboard_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/dashboard.php'; }
+function mass_mailer_lists_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/lists.php'; }
+function mass_mailer_subscribers_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/subscribers.php'; }
+function mass_mailer_segments_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/segments.php'; }
+function mass_mailer_templates_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/templates.php'; }
+function mass_mailer_campaigns_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/campaigns.php'; }
+function mass_mailer_ab_tests_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/ab-tests.php'; }
+function mass_mailer_automations_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/automations.php'; }
+function mass_mailer_reports_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/reports.php'; }
+function mass_mailer_analytics_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/analytics.php'; }
+function mass_mailer_bounces_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/bounces.php'; }
+function mass_mailer_privacy_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/privacy.php'; }
+function mass_mailer_settings_page() { include MASS_MAILER_PLUGIN_DIR . 'admin/settings.php'; }
 
 // Enqueue admin styles (assuming style.css is in mass-mailer/css/)
 function mass_mailer_enqueue_admin_styles($hook) {
