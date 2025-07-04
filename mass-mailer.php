@@ -1,10 +1,10 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Phase 7 Updates
+ * Mass Mailer Main Plugin File - Phase 8 Updates
  *
- * This file integrates the new components for Phase 7: Automation Engine.
- * It adds database table creation for automations and sets up conceptual
- * event hooks to trigger automation processing.
+ * This file integrates the new components for:
+ * - User Authentication & Authorization
+ * - Advanced Settings & Configuration
  *
  * IMPORTANT: This code snippet provides the *additions* and *modifications* to your existing
  * mass-mailer.php file. You will need to integrate these sections.
@@ -12,36 +12,49 @@
  * @package Mass_Mailer
  */
 
+// Start session at the very beginning for authentication
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
 // Ensure no direct access to the file
 if (!defined('ABSPATH')) {
-    die('Direct access not allowed.');
+    define('ABSPATH', dirname(__FILE__) . '/'); // Define ABSPATH for standalone use if not WordPress
+    // For a standalone PHP application, you might use a different check or structure.
+    // For now, we'll just exit if accessed directly without a proper entry point.
+    // die('Direct access not allowed.'); // Keep this if you want strict direct access prevention
 }
 
 // --- Configuration and Core Includes (Existing from all previous phases) ---
-require_once dirname(__FILE__) . '/config.php';
-require_once dirname(__FILE__) . '/includes/db.php';
-require_once dirname(__FILE__) . '/includes/list-manager.php';
-require_once dirname(__FILE__) . '/includes/subscriber-manager.php';
-require_once dirname(__FILE__) . '/includes/template-manager.php';
-require_once dirname(__FILE__) . '/includes/mailer.php';
-require_once dirname(__FILE__) . '/includes/campaign-manager.php';
-require_once dirname(__FILE__) . '/includes/queue-manager.php';
-require_once dirname(__FILE__) . '/includes/tracker.php';
+require_once ABSPATH . '/config.php';
+require_once ABSPATH . '/includes/db.php';
+require_once ABSPATH . '/includes/list-manager.php';
+require_once ABSPATH . '/includes/subscriber-manager.php';
+require_once ABSPATH . '/includes/template-manager.php';
+require_once ABSPATH . '/includes/mailer.php';
+require_once ABSPATH . '/includes/campaign-manager.php';
+require_once ABSPATH . '/includes/queue-manager.php';
+require_once ABSPATH . '/includes/tracker.php';
+require_once ABSPATH . '/includes/automation-manager.php';
 
-// --- NEW: Include Automation Manager ---
-require_once dirname(__FILE__) . '/includes/automation-manager.php';
+// --- NEW: Include Auth Manager and Settings Manager ---
+require_once ABSPATH . '/includes/auth.php';
+require_once ABSPATH . '/includes/settings-manager.php';
 
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Phase 7) ---
+// --- Plugin Activation and Deactivation Hooks (Updated for Auth & Settings) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
     $campaign_manager = new MassMailerCampaignManager();
     $queue_manager = new MassMailerQueueManager();
     $tracker = new MassMailerTracker();
-    $automation_manager = new MassMailerAutomationManager(); // Instantiate to call create table method
+    $automation_manager = new MassMailerAutomationManager();
+    $auth = new MassMailerAuth(); // Instantiate to call create table method
+    $settings_manager = new MassMailerSettingsManager(); // Instantiate to call create table method
 
-    // SQL to create tables (from your db-schema.sql) - Ensure these are idempotent (IF NOT EXISTS)
+
+    // SQL for existing tables (ensure they are idempotent with IF NOT EXISTS)
     $sql_lists = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "lists` (
         `list_id` INT AUTO_INCREMENT PRIMARY KEY,
         `list_name` VARCHAR(255) NOT NULL UNIQUE,
@@ -129,12 +142,15 @@ function mass_mailer_activate() {
         $db->query($sql_lists);
         $db->query($sql_subscribers);
         $db->query($sql_rel);
-        $template_manager->createTemplateTable(); // From Phase 2
-        $campaign_manager->createCampaignTable(); // From Phase 3
-        $queue_manager->createQueueTable();     // From Phase 4
-        $tracker->createTrackingTables();       // From Phase 5
-        // NEW: Create automations table
+        $template_manager->createTemplateTable();
+        $campaign_manager->createCampaignTable();
+        $queue_manager->createQueueTable();
+        $tracker->createTrackingTables();
         $automation_manager->createAutomationTable();
+        // NEW: Create users table
+        $auth->createUsersTable();
+        // NEW: Create settings table
+        $settings_manager->createSettingsTable();
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -158,13 +174,13 @@ function mass_mailer_subscription_form($atts = []) {
         'show_name_fields' => true,
     ], $atts);
     ob_start();
-    require dirname(__FILE__) . '/views/form-builder.php';
+    require ABSPATH . '/views/form-builder.php';
     return ob_get_clean();
 }
 // add_shortcode('mass_mailer_form', 'mass_mailer_subscription_form'); // Example shortcode
 
 
-// --- Handle Frontend Form Submission (AJAX Endpoint - Existing from Phase 1) ---
+// --- Handle Frontend Form Submission (AJAX Endpoint - Existing from Phase 1 & 7) ---
 function mass_mailer_handle_form_submission() {
     $response = ['success' => false, 'message' => 'An unknown error occurred.'];
     if (isset($_POST['mass_mailer_form_submit']) && isset($_POST['email'])) {
@@ -179,8 +195,6 @@ function mass_mailer_handle_form_submission() {
             $subscriber_manager = new MassMailerSubscriberManager();
             $list_manager = new MassMailerListManager();
 
-            // Attempt to add or update the subscriber
-            // Note: Status is 'pending' initially, but if added to a list, it might become 'subscribed'
             $subscriber_id = $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'pending');
 
             if ($subscriber_id) {
@@ -191,10 +205,8 @@ function mass_mailer_handle_form_submission() {
                         if ($added_to_list) {
                             $response['success'] = true;
                             $response['message'] = 'Thank you for subscribing!';
-                            // Update main subscriber status to 'subscribed' if added to at least one list
                             $subscriber_manager->addOrUpdateSubscriber($email, $first_name, $last_name, 'subscribed');
 
-                            // NEW: Trigger automation for 'subscriber_added' event
                             $automation_manager = new MassMailerAutomationManager();
                             $automation_manager->processAutomations('subscriber_added', [
                                 'subscriber_id' => $subscriber_id,
@@ -241,15 +253,11 @@ function mass_mailer_process_queue_cron() {
 // add_action('mass_mailer_queue_cron_hook', 'mass_mailer_process_queue_cron');
 
 
-// --- Tracking Pixel and Click Redirect Endpoints (Updated for Phase 5 & 7) ---
-/**
- * Handles tracking of email opens and clicks, and unsubscribe.
- * Now also triggers automations based on these events.
- */
+// --- Tracking Pixel and Click Redirect Endpoints (Existing from Phase 5 & 7) ---
 function mass_mailer_handle_tracking() {
     $tracker = new MassMailerTracker();
-    $automation_manager = new MassMailerAutomationManager(); // NEW: Automation manager instance
-    $subscriber_manager = new MassMailerSubscriberManager(); // Ensure it's available for unsubscribe
+    $automation_manager = new MassMailerAutomationManager();
+    $subscriber_manager = new MassMailerSubscriberManager();
 
     $campaign_id = isset($_GET['campaign_id']) ? intval($_GET['campaign_id']) : 0;
     $subscriber_id = isset($_GET['subscriber_id']) ? intval($_GET['subscriber_id']) : 0;
@@ -262,7 +270,6 @@ function mass_mailer_handle_tracking() {
                 case 'track_open':
                     $logged = $tracker->logOpen($campaign_id, $subscriber_id, $ip_address, $user_agent);
                     if ($logged) {
-                        // NEW: Trigger automation for 'campaign_opened' event
                         $automation_manager->processAutomations('campaign_opened', [
                             'campaign_id' => $campaign_id,
                             'subscriber_id' => $subscriber_id,
@@ -280,7 +287,6 @@ function mass_mailer_handle_tracking() {
                     if (!empty($original_url)) {
                         $logged = $tracker->logClick($campaign_id, $subscriber_id, $original_url, $ip_address, $user_agent);
                         if ($logged) {
-                            // NEW: Trigger automation for 'campaign_clicked' event
                             $automation_manager->processAutomations('campaign_clicked', [
                                 'campaign_id' => $campaign_id,
                                 'subscriber_id' => $subscriber_id,
@@ -299,7 +305,6 @@ function mass_mailer_handle_tracking() {
                 case 'unsubscribe':
                     $email_to_unsubscribe = isset($_GET['email']) ? filter_var($_GET['email'], FILTER_SANITIZE_EMAIL) : '';
                     if (!empty($email_to_unsubscribe)) {
-                        // Subscriber manager already included at top
                         $subscriber = $subscriber_manager->getSubscriber($email_to_unsubscribe);
                         if ($subscriber) {
                             $subscriber_manager->addOrUpdateSubscriber($email_to_unsubscribe, null, null, 'unsubscribed');
