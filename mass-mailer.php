@@ -1,13 +1,10 @@
 <?php
 /**
- * Mass Mailer Main Plugin File - Phase 8 Updates
+ * Mass Mailer Main Plugin File - Bounce Handling Updates
  *
- * This file integrates the new components for:
- * - User Authentication & Authorization
- * - Advanced Settings & Configuration
- *
- * IMPORTANT: This code snippet provides the *additions* and *modifications* to your existing
- * mass-mailer.php file. You will need to integrate these sections.
+ * This file integrates the new components for Bounce & Complaint Handling.
+ * It adds database table creation for bounce logs and sets up a cron job
+ * to process incoming bounce/FBL emails.
  *
  * @package Mass_Mailer
  */
@@ -20,9 +17,6 @@ if (session_status() == PHP_SESSION_NONE) {
 // Ensure no direct access to the file
 if (!defined('ABSPATH')) {
     define('ABSPATH', dirname(__FILE__) . '/'); // Define ABSPATH for standalone use if not WordPress
-    // For a standalone PHP application, you might use a different check or structure.
-    // For now, we'll just exit if accessed directly without a proper entry point.
-    // die('Direct access not allowed.'); // Keep this if you want strict direct access prevention
 }
 
 // --- Configuration and Core Includes (Existing from all previous phases) ---
@@ -36,13 +30,14 @@ require_once ABSPATH . '/includes/campaign-manager.php';
 require_once ABSPATH . '/includes/queue-manager.php';
 require_once ABSPATH . '/includes/tracker.php';
 require_once ABSPATH . '/includes/automation-manager.php';
-
-// --- NEW: Include Auth Manager and Settings Manager ---
 require_once ABSPATH . '/includes/auth.php';
 require_once ABSPATH . '/includes/settings-manager.php';
 
+// --- NEW: Include Bounce Handler ---
+require_once ABSPATH . '/includes/bounce-handler.php';
 
-// --- Plugin Activation and Deactivation Hooks (Updated for Auth & Settings) ---
+
+// --- Plugin Activation and Deactivation Hooks (Updated for Bounce Handling) ---
 function mass_mailer_activate() {
     $db = MassMailerDB::getInstance();
     $template_manager = new MassMailerTemplateManager();
@@ -50,8 +45,9 @@ function mass_mailer_activate() {
     $queue_manager = new MassMailerQueueManager();
     $tracker = new MassMailerTracker();
     $automation_manager = new MassMailerAutomationManager();
-    $auth = new MassMailerAuth(); // Instantiate to call create table method
-    $settings_manager = new MassMailerSettingsManager(); // Instantiate to call create table method
+    $auth = new MassMailerAuth();
+    $settings_manager = new MassMailerSettingsManager();
+    $bounce_handler = new MassMailerBounceHandler(); // Instantiate to call create table method
 
 
     // SQL for existing tables (ensure they are idempotent with IF NOT EXISTS)
@@ -137,6 +133,18 @@ function mass_mailer_activate() {
             FOREIGN KEY (`subscriber_id`) REFERENCES " . MM_TABLE_PREFIX . "subscribers(`subscriber_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
+    $sql_automations = "CREATE TABLE IF NOT EXISTS `" . MM_TABLE_PREFIX . "automations` (
+            `automation_id` INT AUTO_INCREMENT PRIMARY KEY,
+            `automation_name` VARCHAR(255) NOT NULL UNIQUE,
+            `trigger_type` VARCHAR(50) NOT NULL,
+            `trigger_config` JSON NULL,
+            `action_type` VARCHAR(50) NOT NULL,
+            `action_config` JSON NULL,
+            `status` ENUM('active', 'inactive') DEFAULT 'active',
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+
 
     try {
         $db->query($sql_lists);
@@ -147,10 +155,10 @@ function mass_mailer_activate() {
         $queue_manager->createQueueTable();
         $tracker->createTrackingTables();
         $automation_manager->createAutomationTable();
-        // NEW: Create users table
         $auth->createUsersTable();
-        // NEW: Create settings table
         $settings_manager->createSettingsTable();
+        // NEW: Create bounces log table
+        $bounce_handler->createBouncesLogTable();
         error_log('Mass Mailer: All database tables created/checked successfully.');
     } catch (PDOException $e) {
         error_log('Mass Mailer: Database table creation failed: ' . $e->getMessage());
@@ -165,7 +173,7 @@ function mass_mailer_deactivate() {
 // register_deactivation_hook(__FILE__, 'mass_mailer_deactivate'); // Example hook
 
 
-// --- Frontend Subscription Form Integration (Existing from Phase 1) ---
+// --- Frontend Subscription Form Integration (Existing from Phase 1 & 7) ---
 function mass_mailer_subscription_form($atts = []) {
     $atts = array_merge([
         'list_id' => null,
@@ -252,6 +260,43 @@ function mass_mailer_process_queue_cron() {
 // }
 // add_action('mass_mailer_queue_cron_hook', 'mass_mailer_process_queue_cron');
 
+// For a standalone PHP application, you would set up a system-level cron job
+// to hit a specific PHP script that executes `mass_mailer_process_queue_cron()`.
+// Example cron entry (on your server):
+// * * * * * /usr/bin/php /path/to/your/mass-mailer/cron-worker.php > /dev/null 2>&1
+
+
+// --- NEW: Cron Job for Bounce Processing ---
+/**
+ * Function to be triggered by a cron job to process bounced emails via IMAP.
+ */
+function mass_mailer_process_bounces_cron() {
+    $settings_manager = new MassMailerSettingsManager();
+    if ($settings_manager->getSetting('bounce_handling_enabled') === '1') {
+        $bounce_handler = new MassMailerBounceHandler();
+        $bounce_handler->processBouncesViaIMAP();
+    } else {
+        error_log('MassMailer: Bounce handling is disabled in settings.');
+    }
+}
+// Example of how you might schedule this in a WordPress environment:
+// if (!wp_next_scheduled('mass_mailer_bounces_cron_hook')) {
+//     wp_schedule_event(time(), 'daily', 'mass_mailer_bounces_cron_hook'); // Schedule daily
+// }
+// add_action('mass_mailer_bounces_cron_hook', 'mass_mailer_process_bounces_cron');
+
+// For a standalone PHP application, you would set up a separate system-level cron job
+// to hit a specific PHP script that executes `mass_mailer_process_bounces_cron()`.
+// Example cron entry (on your server):
+// 0 0 * * * /usr/bin/php /path/to/your/mass-mailer/bounce-worker.php > /dev/null 2>&1
+/*
+// bounce-worker.php
+<?php
+require_once dirname(__FILE__) . '/mass-mailer.php'; // Load your main plugin file
+mass_mailer_process_bounces_cron();
+?>
+*/
+
 
 // --- Tracking Pixel and Click Redirect Endpoints (Existing from Phase 5 & 7) ---
 function mass_mailer_handle_tracking() {
@@ -264,10 +309,10 @@ function mass_mailer_handle_tracking() {
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
     $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
 
-    if ($campaign_id > 0 && $subscriber_id > 0) {
-        if (isset($_GET['action'])) {
-            switch ($_GET['action']) {
-                case 'track_open':
+    if (isset($_GET['action'])) {
+        switch ($_GET['action']) {
+            case 'track_open':
+                if ($campaign_id > 0 && $subscriber_id > 0) {
                     $logged = $tracker->logOpen($campaign_id, $subscriber_id, $ip_address, $user_agent);
                     if ($logged) {
                         $automation_manager->processAutomations('campaign_opened', [
@@ -277,10 +322,12 @@ function mass_mailer_handle_tracking() {
                             'user_agent' => $user_agent
                         ]);
                     }
-                    header('Content-Type: image/gif');
-                    echo base64_decode('R0lGODlhAQABAJAAAP8AAAAAACH5BAUQAAAALAAAAAABAAEAAAICBAEAOw==');
-                    exit;
-                case 'track_click':
+                }
+                header('Content-Type: image/gif');
+                echo base64_decode('R0lGODlhAQABAJAAAP8AAAAAACH5BAUQAAAALAAAAAABAAEAAAICBAEAOw==');
+                exit;
+            case 'track_click':
+                if ($campaign_id > 0 && $subscriber_id > 0) {
                     $original_url_encoded = isset($_GET['url']) ? $_GET['url'] : '';
                     $original_url = base66_decode(urldecode($original_url_encoded));
 
@@ -302,24 +349,25 @@ function mass_mailer_handle_tracking() {
                         header('Location: /');
                         exit;
                     }
-                case 'unsubscribe':
-                    $email_to_unsubscribe = isset($_GET['email']) ? filter_var($_GET['email'], FILTER_SANITIZE_EMAIL) : '';
-                    if (!empty($email_to_unsubscribe)) {
-                        $subscriber = $subscriber_manager->getSubscriber($email_to_unsubscribe);
-                        if ($subscriber) {
-                            $subscriber_manager->addOrUpdateSubscriber($email_to_unsubscribe, null, null, 'unsubscribed');
-                            echo "<h1>You have been successfully unsubscribed.</h1><p>You will no longer receive emails from us.</p>";
-                            error_log('MassMailer: Subscriber ' . $email_to_unsubscribe . ' unsubscribed.');
-                        } else {
-                            echo "<h1>Unsubscription failed.</h1><p>Subscriber not found.</p>";
-                            error_log('MassMailer: Unsubscribe failed, email not found: ' . $email_to_unsubscribe);
-                        }
+                }
+                break; // Break from switch if campaign/subscriber IDs are invalid
+            case 'unsubscribe':
+                $email_to_unsubscribe = isset($_GET['email']) ? filter_var($_GET['email'], FILTER_SANITIZE_EMAIL) : '';
+                if (!empty($email_to_unsubscribe)) {
+                    $subscriber = $subscriber_manager->getSubscriber($email_to_unsubscribe);
+                    if ($subscriber) {
+                        $subscriber_manager->addOrUpdateSubscriber($email_to_unsubscribe, null, null, 'unsubscribed');
+                        echo "<h1>You have been successfully unsubscribed.</h1><p>You will no longer receive emails from us.</p>";
+                        error_log('MassMailer: Subscriber ' . $email_to_unsubscribe . ' unsubscribed.');
                     } else {
-                        echo "<h1>Unsubscription failed.</h1><p>Invalid unsubscribe request.</p>";
-                        error_log('MassMailer: Invalid unsubscribe request.');
+                        echo "<h1>Unsubscription failed.</h1><p>Subscriber not found.</p>";
+                        error_log('MassMailer: Unsubscribe failed, email not found: ' . $email_to_unsubscribe);
                     }
-                    exit;
-            }
+                } else {
+                    echo "<h1>Unsubscription failed.</h1><p>Invalid unsubscribe request.</p>";
+                    error_log('MassMailer: Invalid unsubscribe request.');
+                }
+                exit;
         }
     }
 }
