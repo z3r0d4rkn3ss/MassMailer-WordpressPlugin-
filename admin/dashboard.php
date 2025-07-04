@@ -4,7 +4,7 @@
  *
  * This file serves as the main entry point for the Mass Mailer admin area.
  * It provides an overview and navigation links to other admin pages.
- * Now includes authentication check and a link to Manage Segments.
+ * Now includes authentication check and a link to Manage A/B Tests.
  *
  * @package Mass_Mailer
  * @subpackage Admin
@@ -77,6 +77,10 @@ $current_user = $auth->getCurrentUser();
             <div class="nav-item">
                 <a href="campaigns.php">Manage Campaigns</a>
                 <p>Create, schedule, and send email campaigns.</p>
+            </div>
+            <div class="nav-item">
+                <a href="ab-tests.php">A/B Tests</a>
+                <p>Optimize campaigns with split testing.</p>
             </div>
             <div class="nav-item">
                 <a href="analytics.php">View Analytics</a>
