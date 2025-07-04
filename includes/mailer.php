@@ -1,8 +1,8 @@
 <?php
 /**
- * Mass Mailer Mailer Class - Phase 4 Updates
+ * Mass Mailer Mailer Class - Phase 5 Updates
  *
- * This file updates the core mailer logic to be used by the queue system.
+ * This file updates the core mailer logic to integrate email open and click tracking.
  *
  * @package Mass_Mailer
  * @subpackage Includes
@@ -18,16 +18,27 @@ if (!class_exists('MassMailerTemplateManager')) {
 if (!class_exists('MassMailerSubscriberManager')) {
     require_once dirname(__FILE__) . '/subscriber-manager.php';
 }
+// NEW: Include Tracker Manager
+if (!class_exists('MassMailerTracker')) {
+    require_once dirname(__FILE__) . '/tracker.php';
+}
 
 class MassMailerMailer {
     private $db;
     private $template_manager;
     private $subscriber_manager;
+    private $tracker; // New tracker instance
+
+    // Base URL for tracking pixel and click redirects
+    // IMPORTANT: Replace with your actual domain where mass-mailer.php is accessible
+    // e.g., 'http://yourdomain.com/mass-mailer.php'
+    const TRACKING_BASE_URL = 'http://localhost/mass-mailer/mass-mailer.php'; // Adjust this for your setup!
 
     public function __construct() {
         $this->db = MassMailerDB::getInstance();
         $this->template_manager = new MassMailerTemplateManager();
         $this->subscriber_manager = new MassMailerSubscriberManager();
+        $this->tracker = new MassMailerTracker(); // Initialize tracker
     }
 
     /**
@@ -103,15 +114,15 @@ class MassMailerMailer {
     }
 
     /**
-     * Sends an email using a saved template to a specific subscriber.
-     * This version now accepts a campaign-specific subject.
+     * Sends an email using a saved template to a specific subscriber, with tracking.
      *
+     * @param int $campaign_id The ID of the campaign this email belongs to.
      * @param int $template_id The ID of the template to use.
      * @param int $subscriber_id The ID of the subscriber to send to.
      * @param string $campaign_subject The subject line for this specific campaign.
      * @return bool True on success, false on failure.
      */
-    public function sendTemplateEmailToSubscriber($template_id, $subscriber_id, $campaign_subject) {
+    public function sendTemplateEmailToSubscriber($campaign_id, $template_id, $subscriber_id, $campaign_subject) {
         $template = $this->template_manager->getTemplate($template_id);
         $subscriber = $this->subscriber_manager->getSubscriber($subscriber_id);
 
@@ -130,11 +141,10 @@ class MassMailerMailer {
 
         // Personalization (replace placeholders)
         $replacements = [
-            '{{first_name}}' => htmlspecialchars($subscriber['first_name'] ?? ''),
-            '{{last_name}}'  => htmlspecialchars($subscriber['last_name'] ?? ''),
-            '{{email}}'      => htmlspecialchars($subscriber['email']),
-            // Add more placeholders as needed, e.g., unsubscribe link
-            '{{unsubscribe_link}}' => 'http://yourdomain.com/unsubscribe.php?email=' . urlencode($subscriber['email']) // Placeholder for now
+            '{{first_name}}'       => htmlspecialchars($subscriber['first_name'] ?? ''),
+            '{{last_name}}'        => htmlspecialchars($subscriber['last_name'] ?? ''),
+            '{{email}}'            => htmlspecialchars($subscriber['email']),
+            '{{unsubscribe_link}}' => self::TRACKING_BASE_URL . '?action=unsubscribe&email=' . urlencode($subscriber['email']) // Unsubscribe link
         ];
 
         $html_body = str_replace(
@@ -149,12 +159,19 @@ class MassMailerMailer {
             $template['template_text']
         );
 
-        // Use the campaign-specific subject, but also personalize it
         $final_subject = str_replace(
             array_keys($replacements),
             array_values($replacements),
             $campaign_subject
         );
+
+        // --- NEW: Add Tracking Pixel for Opens ---
+        $tracking_pixel = '<img src="' . self::TRACKING_BASE_URL . '?action=track_open&campaign_id=' . $campaign_id . '&subscriber_id=' . $subscriber_id . '" width="1" height="1" border="0" style="display:none !important; visibility:hidden !important; mso-hide:all;">';
+        $html_body = $html_body . $tracking_pixel; // Append pixel to the end of HTML body
+
+        // --- NEW: Wrap Links for Click Tracking ---
+        $html_body = $this->wrapLinksForTracking($html_body, $campaign_id, $subscriber_id);
+
 
         return $this->sendEmail(
             $subscriber['email'],
@@ -163,4 +180,48 @@ class MassMailerMailer {
             $text_body
         );
     }
+
+    /**
+     * Wraps all anchor tags in HTML content with a click tracking URL.
+     *
+     * @param string $html_content The HTML content of the email.
+     * @param int $campaign_id The ID of the campaign.
+     * @param int $subscriber_id The ID of the subscriber.
+     * @return string The HTML content with wrapped links.
+     */
+    private function wrapLinksForTracking($html_content, $campaign_id, $subscriber_id) {
+        // Regex to find all href attributes in anchor tags
+        // This regex is basic and might need refinement for complex HTML structures.
+        return preg_replace_callback('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']([^>]*)>/i', function($matches) use ($campaign_id, $subscriber_id) {
+            $original_url = $matches[1];
+            $other_attributes = $matches[2];
+
+            // Skip mailto, tel, and other non-http/https links
+            if (empty($original_url) || !preg_match('/^https?:\/\//i', $original_url)) {
+                return $matches[0]; // Return original tag if not an http/s link
+            }
+
+            // Encode the original URL and parameters for the tracking redirect
+            $encoded_url = urlencode(base66_encode($original_url)); // Base66 is conceptual, use base64_encode for real
+            $tracking_url = self::TRACKING_BASE_URL . '?action=track_click&campaign_id=' . $campaign_id . '&subscriber_id=' . $subscriber_id . '&url=' . $encoded_url;
+
+            return '<a href="' . htmlspecialchars($tracking_url) . '"' . $other_attributes . '>';
+        }, $html_content);
+    }
+}
+
+/**
+ * Custom Base66 encoding/decoding functions for obfuscation.
+ * This is a conceptual implementation for demonstration.
+ * In a real system, you might use more robust URL shortening/tracking services or encryption.
+ *
+ * Base66 is not a standard encoding. This is just to illustrate a concept.
+ * For actual use, you should use base64_encode/decode or a dedicated URL shortener.
+ */
+function base66_encode($data) {
+    return base64_encode($data); // Using base64 for practical purposes
+}
+
+function base66_decode($data) {
+    return base64_decode($data); // Using base64 for practical purposes
 }
