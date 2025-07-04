@@ -1,8 +1,9 @@
 <?php
 /**
- * Mass Mailer Queue Manager - Segment Integration
+ * Mass Mailer Queue Manager - A/B Test Integration
  *
- * Updates the queue population logic to retrieve subscribers from a segment.
+ * Adds a new method to add specific subscribers to the queue,
+ * which will be used by the A/B Test Manager.
  *
  * @package Mass_Mailer
  * @subpackage Includes
@@ -21,7 +22,6 @@ if (!class_exists('MassMailerSubscriberManager')) {
 if (!class_exists('MassMailerCampaignManager')) {
     require_once dirname(__FILE__) . '/campaign-manager.php';
 }
-// NEW: Include Segment Manager
 if (!class_exists('MassMailerSegmentManager')) {
     require_once dirname(__FILE__) . '/segment-manager.php';
 }
@@ -32,11 +32,11 @@ class MassMailerQueueManager {
     private $mailer;
     private $subscriber_manager;
     private $campaign_manager;
-    private $segment_manager; // New segment manager instance
+    private $segment_manager;
 
     // Configuration for throttling
-    const MAX_EMAILS_PER_BATCH = 50; // Number of emails to process in one cron run
-    const BATCH_PROCESSING_INTERVAL_SECONDS = 60; // Minimum seconds between batch runs (conceptual for cron)
+    const MAX_EMAILS_PER_BATCH = 50;
+    const BATCH_PROCESSING_INTERVAL_SECONDS = 60;
 
     public function __construct() {
         $this->db = MassMailerDB::getInstance();
@@ -44,13 +44,15 @@ class MassMailerQueueManager {
         $this->mailer = new MassMailerMailer();
         $this->subscriber_manager = new MassMailerSubscriberManager();
         $this->campaign_manager = new MassMailerCampaignManager();
-        $this->segment_manager = new MassMailerSegmentManager(); // Initialize segment manager
+        $this->segment_manager = new MassMailerSegmentManager();
     }
 
-    // createQueueTable remains the same as it uses campaign_id and subscriber_id
+    // createQueueTable remains the same
 
     /**
      * Adds subscribers from a campaign's target segment to the email queue.
+     * This method is for regular campaigns. For A/B test variants,
+     * addSubscriberToQueue should be used directly by ABTestManager.
      *
      * @param int $campaign_id The ID of the campaign.
      * @return int The number of subscribers added to the queue, or false on failure.
@@ -62,8 +64,14 @@ class MassMailerQueueManager {
             return false;
         }
 
-        // Get all subscribers for the campaign's segment
-        $subscribers = $this->segment_manager->getSubscribersInSegment($campaign['segment_id']); // Use segment_manager
+        // If this campaign is part of an A/B test, this method should not be called directly
+        // The A/B test manager will handle the population for variants and winners.
+        if (!empty($campaign['ab_test_id'])) {
+            error_log('MassMailerQueueManager: Campaign ' . $campaign_id . ' is part of an A/B test. Use ABTestManager to populate queue.');
+            return false;
+        }
+
+        $subscribers = $this->segment_manager->getSubscribersInSegment($campaign['segment_id']);
         if (empty($subscribers)) {
             error_log('MassMailerQueueManager: No subscribers found for segment ' . $campaign['segment_id'] . '.');
             return 0;
@@ -71,32 +79,60 @@ class MassMailerQueueManager {
 
         $added_count = 0;
         foreach ($subscribers as $subscriber) {
-            // Only add if subscriber is 'subscribed'
-            // The segment manager should ideally already filter by active status, but a final check is good.
             if ($subscriber['status'] === 'subscribed') {
-                try {
-                    // Use INSERT IGNORE to prevent duplicates if already in queue for this campaign
-                    $sql = "INSERT IGNORE INTO {$this->queue_table} (campaign_id, subscriber_id, status) VALUES (:campaign_id, :subscriber_id, 'pending')";
-                    $stmt = $this->db->query($sql, [
-                        ':campaign_id' => $campaign_id,
-                        ':subscriber_id' => $subscriber['subscriber_id']
-                    ]);
-                    if ($stmt->rowCount() > 0) {
-                        $added_count++;
-                    }
-                } catch (PDOException $e) {
-                    error_log('MassMailerQueueManager: Error adding subscriber ' . $subscriber['subscriber_id'] . ' to queue for campaign ' . $campaign_id . ': ' . $e->getMessage());
+                if ($this->addSubscriberToQueue($campaign_id, $subscriber['subscriber_id'])) {
+                    $added_count++;
                 }
             } else {
                 error_log('MassMailerQueueManager: Skipping subscriber ' . $subscriber['email'] . ' (ID: ' . $subscriber['subscriber_id'] . ') due to status: ' . $subscriber['status']);
             }
         }
 
-        // Update total recipients for the campaign
         $this->campaign_manager->setTotalRecipients($campaign_id, $added_count);
         error_log('MassMailerQueueManager: Added ' . $added_count . ' subscribers to queue for campaign ' . $campaign_id);
         return $added_count;
     }
 
-    // getEmailsForSending, processQueueBatch, updateQueueItemStatus remain the same
+    /**
+     * Adds a single subscriber to the email queue for a specific campaign.
+     * This method is now public and can be used by ABTestManager.
+     *
+     * @param int $campaign_id The ID of the campaign.
+     * @param int $subscriber_id The ID of the subscriber.
+     * @return bool True on success, false on failure.
+     */
+    public function addSubscriberToQueue($campaign_id, $subscriber_id) {
+        try {
+            // Use INSERT IGNORE to prevent duplicates if already in queue for this campaign
+            $sql = "INSERT IGNORE INTO {$this->queue_table} (campaign_id, subscriber_id, status) VALUES (:campaign_id, :subscriber_id, 'pending')";
+            $stmt = $this->db->query($sql, [
+                ':campaign_id' => $campaign_id,
+                ':subscriber_id' => $subscriber_id
+            ]);
+            return $stmt->rowCount() > 0;
+        } catch (PDOException $e) {
+            error_log('MassMailerQueueManager: Error adding subscriber ' . $subscriber_id . ' to queue for campaign ' . $campaign_id . ': ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Retrieves all queue entries for a given campaign.
+     * Useful for A/B testing to identify which subscribers were part of the test group.
+     *
+     * @param int $campaign_id
+     * @return array
+     */
+    public function getQueueEntriesForCampaign($campaign_id) {
+        $sql = "SELECT * FROM {$this->queue_table} WHERE campaign_id = :campaign_id";
+        try {
+            return $this->db->fetchAll($sql, [':campaign_id' => $campaign_id]);
+        } catch (PDOException $e) {
+            error_log('MassMailerQueueManager: Error getting queue entries for campaign ' . $campaign_id . ': ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    // getEmailsForSending, processQueueBatch, updateQueueItemStatus remain mostly the same
+    // processQueueBatch will now use the updated mailer which gets settings from DB.
 }
